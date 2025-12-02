@@ -68,7 +68,7 @@
 	<rule ref="WordPress.WP.I18n">
 		<properties>
 			<property name="text_domain" type="array">
-				<element value="altolith-deploy"/>
+				<element value="wp-dbal"/>
 			</property>
 		</properties>
 	</rule>

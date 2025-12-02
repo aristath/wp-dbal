@@ -24,6 +24,7 @@ use WP_DBAL\Translator\QueryConverter;
  *
  * @property-read string $prefix WordPress table prefix.
  */
+// phpcs:ignore Squiz.Classes.ValidClassName.NotCamelCaps -- Follows WordPress naming convention for wpdb extension
 class WP_DBAL_DB extends \wpdb
 {
 	/**
@@ -31,51 +32,52 @@ class WP_DBAL_DB extends \wpdb
 	 *
 	 * @var Connection|null
 	 */
-	protected ?Connection $dbal_connection = null;
+	protected ?Connection $dbalConnection = null;
 
 	/**
 	 * Query converter for cross-platform SQL translation.
 	 *
 	 * @var QueryConverter|null
 	 */
-	protected ?QueryConverter $query_converter = null;
+	protected ?QueryConverter $queryConverter = null;
 
 	/**
 	 * The database engine being used.
 	 *
 	 * @var string
 	 */
-	protected string $db_engine = 'mysql';
+	protected string $dbEngine = 'mysql';
 
 	/**
 	 * Last executed query (translated).
 	 *
 	 * @var string
 	 */
-	protected string $last_translated_query = '';
+	protected string $lastTranslatedQuery = '';
 
 	/**
 	 * Whether we're using DBAL or falling back to native.
 	 *
 	 * @var boolean
 	 */
-	protected bool $using_dbal = false;
+	protected bool $usingDbal = false;
 
 	/**
 	 * Constructor.
 	 *
-	 * @param string $db_engine The database engine to use (mysql, pgsql, sqlite).
+	 * @param string $dbEngine The database engine to use (mysql, pgsql, sqlite).
 	 */
-	public function __construct(string $db_engine = 'mysql')
+	public function __construct(string $dbEngine = 'mysql')
 	{
-		$this->db_engine = $db_engine;
+		$this->dbEngine = $dbEngine;
 
 		// Don't call parent constructor - it tries to connect immediately.
 		// We'll handle connection in db_connect().
 
 		// Set up table prefix from global.
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound, Squiz.NamingConventions.ValidVariableName.NotCamelCaps -- WordPress core global
 		global $table_prefix;
-		$this->prefix = $table_prefix ?? 'wp_';
+		$this->prefix = $table_prefix ?? 'wp_'; // phpcs:ignore Squiz.NamingConventions.ValidVariableName.NotCamelCaps -- WordPress core global
 
 		// Initialize empty values that wpdb expects.
 		$this->dbuser     = \defined('DB_USER') ? DB_USER : '';
@@ -91,6 +93,7 @@ class WP_DBAL_DB extends \wpdb
 	 *
 	 * @return void
 	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
 	public function init_charset(): void
 	{
 		$this->charset = \defined('DB_CHARSET') ? DB_CHARSET : 'utf8mb4';
@@ -106,35 +109,36 @@ class WP_DBAL_DB extends \wpdb
 	/**
 	 * Connect to the database using Doctrine DBAL.
 	 *
-	 * @param bool $allow_bail Whether to allow bailing on error.
+	 * @param bool $allowBail Whether to allow bailing on error.
 	 * @return bool True on success, false on failure.
 	 */
-	public function db_connect($allow_bail = true): bool
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
+	public function db_connect($allowBail = true): bool
 	{
 		// If already connected, return.
-		if (null !== $this->dbal_connection && $this->dbal_connection->isConnected()) {
+		if (null !== $this->dbalConnection && $this->dbalConnection->isConnected()) {
 			return true;
 		}
 
 		try {
-			$connection_params = $this->get_connection_params();
-			$this->dbal_connection = DriverManager::getConnection($connection_params);
+			$connectionParams = $this->getConnectionParams();
+			$this->dbalConnection = DriverManager::getConnection($connectionParams);
 
 			// Initialize the query converter for cross-platform SQL translation.
-			$this->query_converter = new QueryConverter($this->dbal_connection);
+			$this->queryConverter = new QueryConverter($this->dbalConnection);
 
 			// Set the native connection handle for WordPress compatibility.
 			// phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
-			$this->dbh = $this->dbal_connection->getNativeConnection();
+			$this->dbh = $this->dbalConnection->getNativeConnection();
 
 			$this->ready      = true;
-			$this->using_dbal = true;
+			$this->usingDbal = true;
 			// Note: has_connected is defined in parent wpdb class.
 			/** @phpstan-ignore-next-line */
 			$this->has_connected = true;
 
 			// Set charset if MySQL.
-			if ('mysql' === $this->db_engine) {
+			if ('mysql' === $this->dbEngine) {
 				$this->set_charset($this->dbh);
 			}
 
@@ -146,10 +150,10 @@ class WP_DBAL_DB extends \wpdb
 				\error_log('WP-DBAL Connection Error: ' . $e->getMessage());
 			}
 
-			if ($allow_bail) {
+			if ($allowBail) {
 				// Cannot use WordPress functions here - db.php loads before WordPress.
 				$message = '<h1>Error establishing a database connection</h1>' . "\n";
-				$message .= '<p>WP-DBAL could not connect to the ' . \htmlspecialchars($this->db_engine) . ' database.</p>' . "\n";
+				$message .= '<p>WP-DBAL could not connect to the ' . \htmlspecialchars($this->dbEngine) . ' database.</p>' . "\n";
 
 				if (\defined('WP_DEBUG') && WP_DEBUG) {
 					$message .= '<p><code>' . \htmlspecialchars($e->getMessage()) . '</code></p>';
@@ -159,6 +163,7 @@ class WP_DBAL_DB extends \wpdb
 				if (\method_exists($this, 'bail')) {
 					$this->bail($message, 'db_connect_fail');
 				} else {
+					// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- $message is built with htmlspecialchars, early bailout before WordPress loaded
 					die($message);
 				}
 			}
@@ -172,7 +177,7 @@ class WP_DBAL_DB extends \wpdb
 	 *
 	 * @return array<string, mixed>
 	 */
-	protected function get_connection_params(): array
+	protected function getConnectionParams(): array
 	{
 		// Check for custom DBAL options.
 		if (\defined('DB_DBAL_OPTIONS') && \is_array(DB_DBAL_OPTIONS)) {
@@ -180,26 +185,26 @@ class WP_DBAL_DB extends \wpdb
 		}
 
 		// Build connection params based on engine.
-		switch ($this->db_engine) {
+		switch ($this->dbEngine) {
 			case 'sqlite':
 				if (\defined('DB_SQLITE_PATH')) {
-					$db_path = DB_SQLITE_PATH;
+					$dbPath = DB_SQLITE_PATH;
 				} elseif (\defined('WP_CONTENT_DIR')) {
-					$db_path = WP_CONTENT_DIR . '/database/.ht.sqlite';
+					$dbPath = WP_CONTENT_DIR . '/database/.ht.sqlite';
 				} else {
 					// Fallback using ABSPATH if WP_CONTENT_DIR not yet defined.
-					$db_path = ABSPATH . 'wp-content/database/.ht.sqlite';
+					$dbPath = ABSPATH . 'wp-content/database/.ht.sqlite';
 				}
 
 				// Ensure directory exists (can't use wp_mkdir_p - not loaded yet).
-				$db_dir = \dirname($db_path);
-				if (! \is_dir($db_dir)) {
-					\mkdir($db_dir, 0755, true);
+				$dbDir = \dirname($dbPath);
+				if (! \is_dir($dbDir)) {
+					\mkdir($dbDir, 0755, true);
 				}
 
 				return [
 					'driver' => 'pdo_sqlite',
-					'path'   => $db_path,
+					'path'   => $dbPath,
 				];
 
 			case 'pgsql':
@@ -253,6 +258,7 @@ class WP_DBAL_DB extends \wpdb
 	 * @param string $query The SQL query to execute.
 	 * @return int|bool Number of rows affected/selected or false on error.
 	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
 	public function query($query)
 	{
 		if (! $this->ready) {
@@ -317,9 +323,10 @@ class WP_DBAL_DB extends \wpdb
 	 * @param string $query The SQL query.
 	 * @return int|bool Number of rows affected/selected or false on error.
 	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps, PSR2.Methods.MethodDeclaration.Underscore, Squiz.NamingConventions.ValidFunctionName.PublicUnderscore -- wpdb override
 	public function _do_query($query)
 	{
-		if (null === $this->dbal_connection || null === $this->query_converter) {
+		if (null === $this->dbalConnection || null === $this->queryConverter) {
 			return false;
 		}
 
@@ -327,20 +334,20 @@ class WP_DBAL_DB extends \wpdb
 		$this->last_error = '';
 
 		// Convert the query for the target database platform.
-		$converted_query = $this->query_converter->convert($query);
+		$convertedQuery = $this->queryConverter->convert($query);
 
 		// Handle multiple queries (some conversions may result in multiple statements).
-		if (\is_array($converted_query)) {
-			$this->last_translated_query = \implode('; ', $converted_query);
-			$final_result = false;
-			foreach ($converted_query as $single_query) {
-				$final_result = $this->execute_single_query($single_query);
+		if (\is_array($convertedQuery)) {
+			$this->lastTranslatedQuery = \implode('; ', $convertedQuery);
+			$finalResult = false;
+			foreach ($convertedQuery as $singleQuery) {
+				$finalResult = $this->executeSingleQuery($singleQuery);
 			}
-			return $final_result;
+			return $finalResult;
 		}
 
-		$this->last_translated_query = $converted_query;
-		return $this->execute_single_query($converted_query);
+		$this->lastTranslatedQuery = $convertedQuery;
+		return $this->executeSingleQuery($convertedQuery);
 	}
 
 	/**
@@ -349,23 +356,23 @@ class WP_DBAL_DB extends \wpdb
 	 * @param string $query The SQL query.
 	 * @return int|bool Number of rows affected/selected or false on error.
 	 */
-	protected function execute_single_query(string $query): int|bool
+	protected function executeSingleQuery(string $query): int|bool
 	{
-		if (null === $this->dbal_connection) {
+		if (null === $this->dbalConnection) {
 			return false;
 		}
 
 		// Determine query type.
-		$query_type = $this->get_query_type($query);
+		$queryType = $this->getQueryType($query);
 
 		try {
-			switch ($query_type) {
+			switch ($queryType) {
 				case 'SELECT':
 				case 'SHOW':
 				case 'DESCRIBE':
 				case 'DESC':
 				case 'EXPLAIN':
-					$result = $this->dbal_connection->executeQuery($query);
+					$result = $this->dbalConnection->executeQuery($query);
 					$rows = $result->fetchAllAssociative();
 					$this->num_rows = \count($rows);
 
@@ -378,20 +385,20 @@ class WP_DBAL_DB extends \wpdb
 					return $this->num_rows;
 
 				case 'INSERT':
-					$this->dbal_connection->executeStatement($query);
-					$this->insert_id = (int) $this->dbal_connection->lastInsertId();
+					$this->dbalConnection->executeStatement($query);
+					$this->insert_id = (int) $this->dbalConnection->lastInsertId();
 					$this->rows_affected = 1; // DBAL doesn't return affected rows for INSERT reliably.
 					return $this->rows_affected;
 
 				case 'UPDATE':
 				case 'DELETE':
 				case 'REPLACE':
-					$this->rows_affected = $this->dbal_connection->executeStatement($query);
+					$this->rows_affected = $this->dbalConnection->executeStatement($query);
 					return $this->rows_affected;
 
 				default:
 					// DDL or other statements.
-					$this->dbal_connection->executeStatement($query);
+					$this->dbalConnection->executeStatement($query);
 					return true;
 			}
 		} catch (DBALException $e) {
@@ -406,7 +413,7 @@ class WP_DBAL_DB extends \wpdb
 	 * @param string $query The SQL query.
 	 * @return string The query type (SELECT, INSERT, UPDATE, DELETE, etc.).
 	 */
-	protected function get_query_type(string $query): string
+	protected function getQueryType(string $query): string
 	{
 		$query = \ltrim($query);
 
@@ -423,6 +430,7 @@ class WP_DBAL_DB extends \wpdb
 	 * @param string $string The string to escape.
 	 * @return string The escaped string.
 	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps, PSR2.Methods.MethodDeclaration.Underscore, Squiz.NamingConventions.ValidFunctionName.PublicUnderscore -- wpdb override
 	public function _real_escape($string): string
 	{
 		if (! \is_string($string)) {
@@ -438,15 +446,16 @@ class WP_DBAL_DB extends \wpdb
 	 *
 	 * @return string|null The database version.
 	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
 	public function db_version(): ?string
 	{
-		if (null === $this->dbal_connection) {
+		if (null === $this->dbalConnection) {
 			return null;
 		}
 
 		// Return a version string based on the engine.
 		// DBAL 4.x doesn't have getName() on platform.
-		switch ($this->db_engine) {
+		switch ($this->dbEngine) {
 			case 'sqlite':
 				return '3.0'; // SQLite version placeholder.
 
@@ -466,6 +475,7 @@ class WP_DBAL_DB extends \wpdb
 	 * @param string $capability The capability to check.
 	 * @return bool Whether the database supports the capability.
 	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
 	public function has_cap($capability): bool
 	{
 		$capability = \strtolower($capability);
@@ -484,7 +494,7 @@ class WP_DBAL_DB extends \wpdb
 		}
 
 		// Engine-specific capabilities.
-		switch ($this->db_engine) {
+		switch ($this->dbEngine) {
 			case 'mysql':
 				return true; // MySQL supports all standard capabilities.
 
@@ -516,10 +526,11 @@ class WP_DBAL_DB extends \wpdb
 	 * @param string|null $collate Optional. The collation to use.
 	 * @return bool True on success, false on failure.
 	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
 	public function set_charset($dbh, $charset = null, $collate = null): bool
 	{
 		// Only relevant for MySQL.
-		if ('mysql' !== $this->db_engine) {
+		if ('mysql' !== $this->dbEngine) {
 			return true;
 		}
 
@@ -532,8 +543,8 @@ class WP_DBAL_DB extends \wpdb
 		}
 
 		try {
-			if (null !== $this->dbal_connection) {
-				$this->dbal_connection->executeStatement("SET NAMES '{$charset}'");
+			if (null !== $this->dbalConnection) {
+				$this->dbalConnection->executeStatement("SET NAMES '{$charset}'");
 			}
 			return true;
 		} catch (\Exception $e) {
@@ -548,49 +559,50 @@ class WP_DBAL_DB extends \wpdb
 	 * @param array<int, string> $modes Optional. A list of SQL modes to set.
 	 * @return void
 	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
 	public function set_sql_mode($modes = []): void
 	{
-		if (null === $this->dbal_connection) {
+		if (null === $this->dbalConnection) {
 			return;
 		}
 
 		// Only relevant for MySQL.
-		if ('mysql' !== $this->db_engine) {
+		if ('mysql' !== $this->dbEngine) {
 			return;
 		}
 
 		try {
 			if (empty($modes)) {
-				$result = $this->dbal_connection->executeQuery('SELECT @@SESSION.sql_mode');
+				$result = $this->dbalConnection->executeQuery('SELECT @@SESSION.sql_mode');
 				$row = $result->fetchAssociative();
 				if (! $row) {
 					return;
 				}
 
-				$modes_str = $row['@@SESSION.sql_mode'] ?? '';
-				if (empty($modes_str)) {
+				$modesStr = $row['@@SESSION.sql_mode'] ?? '';
+				if (empty($modesStr)) {
 					return;
 				}
-				$modes = \explode(',', $modes_str);
+				$modes = \explode(',', $modesStr);
 			}
 
 			$modes = \array_change_key_case($modes, CASE_UPPER);
 
 			// Apply incompatible modes filter only if WordPress is loaded.
 			if (\function_exists('apply_filters')) {
-				$incompatible_modes = (array) \apply_filters('incompatible_sql_modes', $this->incompatible_modes);
+				$incompatibleModes = (array) \apply_filters('incompatible_sql_modes', $this->incompatible_modes);
 			} else {
-				$incompatible_modes = $this->incompatible_modes;
+				$incompatibleModes = $this->incompatible_modes;
 			}
 
 			foreach ($modes as $i => $mode) {
-				if (\in_array($mode, $incompatible_modes, true)) {
+				if (\in_array($mode, $incompatibleModes, true)) {
 					unset($modes[ $i ]);
 				}
 			}
 
-			$modes_str = \implode(',', $modes);
-			$this->dbal_connection->executeStatement("SET SESSION sql_mode='{$modes_str}'");
+			$modesStr = \implode(',', $modes);
+			$this->dbalConnection->executeStatement("SET SESSION sql_mode='{$modesStr}'");
 		} catch (\Exception $e) {
 			// SQL mode setting is not critical.
 		}
@@ -603,10 +615,11 @@ class WP_DBAL_DB extends \wpdb
 	 * @param string $column The column name.
 	 * @return string|false|\WP_Error The column charset or false/WP_Error on failure.
 	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
 	public function get_col_charset($table, $column)
 	{
 		// For non-MySQL engines, just return utf8mb4.
-		if ('mysql' !== $this->db_engine) {
+		if ('mysql' !== $this->dbEngine) {
 			return 'utf8mb4';
 		}
 
@@ -617,22 +630,23 @@ class WP_DBAL_DB extends \wpdb
 	/**
 	 * Check the database connection.
 	 *
-	 * @param bool $allow_bail Whether to allow bailing on error.
+	 * @param bool $allowBail Whether to allow bailing on error.
 	 * @return bool True if connection is up, false otherwise.
 	 */
-	public function check_connection($allow_bail = true)
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
+	public function check_connection($allowBail = true)
 	{
-		if (null === $this->dbal_connection) {
-			return $this->db_connect($allow_bail);
+		if (null === $this->dbalConnection) {
+			return $this->db_connect($allowBail);
 		}
 
 		try {
 			// Test the connection with a simple query.
-			$this->dbal_connection->executeQuery('SELECT 1');
+			$this->dbalConnection->executeQuery('SELECT 1');
 			return true;
 		} catch (DBALException $e) {
 			// Try to reconnect.
-			return $this->db_connect($allow_bail);
+			return $this->db_connect($allowBail);
 		}
 	}
 
@@ -643,13 +657,14 @@ class WP_DBAL_DB extends \wpdb
 	 * @param mixed  $dbh Optional. Database connection handle.
 	 * @return void
 	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
 	public function select($db, $dbh = null): void
 	{
 		// DBAL handles database selection at connection time.
 		// For MySQL, we can switch databases if needed.
-		if ('mysql' === $this->db_engine && null !== $this->dbal_connection) {
+		if ('mysql' === $this->dbEngine && null !== $this->dbalConnection) {
 			try {
-				$this->dbal_connection->executeStatement("USE `{$db}`");
+				$this->dbalConnection->executeStatement("USE `{$db}`");
 				$this->dbname = $db;
 			} catch (DBALException $e) {
 				$this->ready = false;
@@ -662,6 +677,7 @@ class WP_DBAL_DB extends \wpdb
 	 *
 	 * @return void
 	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
 	public function flush(): void
 	{
 		$this->last_result   = [];
@@ -678,15 +694,16 @@ class WP_DBAL_DB extends \wpdb
 	 *
 	 * @return bool True if the connection was successfully closed.
 	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
 	public function close(): bool
 	{
-		if (null === $this->dbal_connection) {
+		if (null === $this->dbalConnection) {
 			return false;
 		}
 
 		try {
-			$this->dbal_connection->close();
-			$this->dbal_connection = null;
+			$this->dbalConnection->close();
+			$this->dbalConnection = null;
 			$this->dbh             = null;
 			$this->ready           = false;
 			/** @phpstan-ignore-next-line */
@@ -702,6 +719,7 @@ class WP_DBAL_DB extends \wpdb
 	 *
 	 * @return void
 	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
 	protected function load_col_info(): void
 	{
 		// col_info is populated differently with DBAL.
@@ -720,24 +738,27 @@ class WP_DBAL_DB extends \wpdb
 	 *
 	 * @return string Server info string.
 	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
 	public function db_server_info(): string
 	{
-		if (null === $this->dbal_connection) {
+		if (null === $this->dbalConnection) {
 			return '';
 		}
 
 		try {
 			// Try to get server version from the connection.
-			$native = $this->dbal_connection->getNativeConnection();
+			$native = $this->dbalConnection->getNativeConnection();
 
+			// phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO -- DBAL uses PDO as native connection
 			if ($native instanceof \PDO) {
-				return $native->getAttribute(\PDO::ATTR_SERVER_VERSION) ?: $this->get_default_server_info();
+				// phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO -- DBAL uses PDO as native connection
+				return $native->getAttribute(\PDO::ATTR_SERVER_VERSION) ?: $this->getDefaultServerInfo();
 			}
 		} catch (\Exception $e) {
 			// Fall through to default.
 		}
 
-		return $this->get_default_server_info();
+		return $this->getDefaultServerInfo();
 	}
 
 	/**
@@ -745,9 +766,9 @@ class WP_DBAL_DB extends \wpdb
 	 *
 	 * @return string Default server info string.
 	 */
-	protected function get_default_server_info(): string
+	protected function getDefaultServerInfo(): string
 	{
-		switch ($this->db_engine) {
+		switch ($this->dbEngine) {
 			case 'sqlite':
 				return 'SQLite 3.0';
 			case 'pgsql':
@@ -764,9 +785,9 @@ class WP_DBAL_DB extends \wpdb
 	 *
 	 * @return Connection|null
 	 */
-	public function get_dbal_connection(): ?Connection
+	public function getDbalConnection(): ?Connection
 	{
-		return $this->dbal_connection;
+		return $this->dbalConnection;
 	}
 
 	/**
@@ -774,9 +795,9 @@ class WP_DBAL_DB extends \wpdb
 	 *
 	 * @return string
 	 */
-	public function get_db_engine(): string
+	public function getDbEngine(): string
 	{
-		return $this->db_engine;
+		return $this->dbEngine;
 	}
 
 	/**
@@ -784,9 +805,9 @@ class WP_DBAL_DB extends \wpdb
 	 *
 	 * @return string
 	 */
-	public function get_last_translated_query(): string
+	public function getLastTranslatedQuery(): string
 	{
-		return $this->last_translated_query;
+		return $this->lastTranslatedQuery;
 	}
 
 	/**
@@ -794,9 +815,9 @@ class WP_DBAL_DB extends \wpdb
 	 *
 	 * @return bool
 	 */
-	public function is_using_dbal(): bool
+	public function isUsingDbal(): bool
 	{
-		return $this->using_dbal;
+		return $this->usingDbal;
 	}
 
 	/**
@@ -809,6 +830,7 @@ class WP_DBAL_DB extends \wpdb
 	 * @param array|null $data     Additional data.
 	 * @return void
 	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
 	public function log_query($query, $elapsed, $caller, $start = null, $data = null): void
 	{
 		$this->queries[] = [
@@ -817,8 +839,8 @@ class WP_DBAL_DB extends \wpdb
 			$caller,
 			$start ?? \microtime(true) - $elapsed,
 			[
-				'translated' => $this->last_translated_query,
-				'engine'     => $this->db_engine,
+				'translated' => $this->lastTranslatedQuery,
+				'engine'     => $this->dbEngine,
 			],
 		];
 	}

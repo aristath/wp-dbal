@@ -40,7 +40,7 @@ class QueryConverter
 	 *
 	 * @var FunctionMapper
 	 */
-	protected FunctionMapper $function_mapper;
+	protected FunctionMapper $functionMapper;
 
 	/**
 	 * Constructor.
@@ -49,8 +49,8 @@ class QueryConverter
 	 */
 	public function __construct(Connection $connection)
 	{
-		$this->connection      = $connection;
-		$this->function_mapper = new FunctionMapper($connection);
+		$this->connection     = $connection;
+		$this->functionMapper = new FunctionMapper($connection);
 	}
 
 	/**
@@ -73,11 +73,11 @@ class QueryConverter
 
 		// Convert based on statement type.
 		return match (true) {
-			$statement instanceof SelectStatement  => $this->convert_select($statement),
-			$statement instanceof InsertStatement  => $this->convert_insert($statement),
-			$statement instanceof UpdateStatement  => $this->convert_update($statement),
-			$statement instanceof DeleteStatement  => $this->convert_delete($statement),
-			$statement instanceof ReplaceStatement => $this->convert_replace($statement),
+			$statement instanceof SelectStatement  => $this->convertSelect($statement),
+			$statement instanceof InsertStatement  => $this->convertInsert($statement),
+			$statement instanceof UpdateStatement  => $this->convertUpdate($statement),
+			$statement instanceof DeleteStatement  => $this->convertDelete($statement),
+			$statement instanceof ReplaceStatement => $this->convertReplace($statement),
 			default                                => $query, // Pass through unsupported statements.
 		};
 	}
@@ -88,7 +88,7 @@ class QueryConverter
 	 * @param SelectStatement $stmt The parsed SELECT statement.
 	 * @return string The converted SQL.
 	 */
-	protected function convert_select(SelectStatement $stmt): string
+	protected function convertSelect(SelectStatement $stmt): string
 	{
 		$qb = $this->connection->createQueryBuilder();
 
@@ -101,20 +101,20 @@ class QueryConverter
 		$columns = [];
 		if (! empty($stmt->expr)) {
 			foreach ($stmt->expr as $expr) {
-				$columns[] = $this->convert_expression($expr);
+				$columns[] = $this->convertExpression($expr);
 			}
 		}
 		$qb->select(...$columns);
 
 		// FROM clause - track the primary table alias for JOINs.
-		$from_alias = null;
+		$fromAlias = null;
 		if (! empty($stmt->from)) {
 			foreach ($stmt->from as $i => $from) {
-				$table = $this->get_table_reference($from);
+				$table = $this->getTableReference($from);
 				if (0 === $i) {
 					// Use alias if provided, otherwise use table name as alias.
-					$from_alias = $table['alias'] ?? $table['table'];
-					$qb->from($table['table'], $from_alias);
+					$fromAlias = $table['alias'] ?? $table['table'];
+					$qb->from($table['table'], $fromAlias);
 				}
 			}
 		}
@@ -122,43 +122,43 @@ class QueryConverter
 		// JOIN clauses.
 		// DBAL signature: innerJoin($fromAlias, $joinTable, $joinAlias, $condition)
 		// $fromAlias must be an alias already registered (from FROM or previous JOIN).
-		if (! empty($stmt->join) && null !== $from_alias) {
+		if (! empty($stmt->join) && null !== $fromAlias) {
 			foreach ($stmt->join as $join) {
-				$join_table = $this->get_table_reference($join->expr);
-				$join_type  = \strtoupper($join->type);
-				$join_on    = '';
+				$joinTable = $this->getTableReference($join->expr);
+				$joinType  = \strtoupper($join->type);
+				$joinOn    = '';
 
 				// Use alias if provided, otherwise use table name as alias.
-				$join_alias = $join_table['alias'] ?? $join_table['table'];
+				$joinAlias = $joinTable['alias'] ?? $joinTable['table'];
 
 				if (! empty($join->on)) {
 					$conditions = [];
 					foreach ($join->on as $cond) {
 						$conditions[] = $cond->expr;
 					}
-					$join_on = \implode(' AND ', $conditions);
+					$joinOn = \implode(' AND ', $conditions);
 				}
 
 				// First argument is the FROM alias (the table we're joining FROM).
-				match ($join_type) {
-					'LEFT', 'LEFT OUTER'   => $qb->leftJoin($from_alias, $join_table['table'], $join_alias, $join_on),
-					'RIGHT', 'RIGHT OUTER' => $qb->rightJoin($from_alias, $join_table['table'], $join_alias, $join_on),
-					default                => $qb->innerJoin($from_alias, $join_table['table'], $join_alias, $join_on),
+				match ($joinType) {
+					'LEFT', 'LEFT OUTER'   => $qb->leftJoin($fromAlias, $joinTable['table'], $joinAlias, $joinOn),
+					'RIGHT', 'RIGHT OUTER' => $qb->rightJoin($fromAlias, $joinTable['table'], $joinAlias, $joinOn),
+					default                => $qb->innerJoin($fromAlias, $joinTable['table'], $joinAlias, $joinOn),
 				};
 			}
 		}
 
 		// WHERE clause.
 		if (! empty($stmt->where)) {
-			$where_parts = [];
+			$whereParts = [];
 			foreach ($stmt->where as $cond) {
 				if ($cond->isOperator) {
-					$where_parts[] = $cond->expr;
+					$whereParts[] = $cond->expr;
 				} else {
-					$where_parts[] = $this->convert_condition_expression($cond->expr);
+					$whereParts[] = $this->convertConditionExpression($cond->expr);
 				}
 			}
-			$qb->where(\implode(' ', $where_parts));
+			$qb->where(\implode(' ', $whereParts));
 		}
 
 		// GROUP BY clause.
@@ -170,15 +170,15 @@ class QueryConverter
 
 		// HAVING clause.
 		if (! empty($stmt->having)) {
-			$having_parts = [];
+			$havingParts = [];
 			foreach ($stmt->having as $cond) {
 				if ($cond->isOperator) {
-					$having_parts[] = $cond->expr;
+					$havingParts[] = $cond->expr;
 				} else {
-					$having_parts[] = $this->convert_condition_expression($cond->expr);
+					$havingParts[] = $this->convertConditionExpression($cond->expr);
 				}
 			}
-			$qb->having(\implode(' ', $having_parts));
+			$qb->having(\implode(' ', $havingParts));
 		}
 
 		// ORDER BY clause.
@@ -205,7 +205,7 @@ class QueryConverter
 	 * @param InsertStatement $stmt The parsed INSERT statement.
 	 * @return string The converted SQL.
 	 */
-	protected function convert_insert(InsertStatement $stmt): string
+	protected function convertInsert(InsertStatement $stmt): string
 	{
 		$table = $stmt->into->dest->table ?? '';
 
@@ -218,52 +218,52 @@ class QueryConverter
 		}
 
 		// Get values - use raw to preserve quotes.
-		$all_values = [];
+		$allValues = [];
 		if (! empty($stmt->values)) {
-			foreach ($stmt->values as $value_set) {
+			foreach ($stmt->values as $valueSet) {
 				$values = [];
 				// Use raw values to preserve string quotes.
 				// ArrayObj has 'raw' property, Array2d elements are also ArrayObj.
-				/** @var \PhpMyAdmin\SqlParser\Components\ArrayObj $value_set */
-				$raw_values = $value_set->raw;
-				foreach ($raw_values as $val) {
-					$values[] = $this->convert_value_expression($val);
+				/** @var \PhpMyAdmin\SqlParser\Components\ArrayObj $valueSet */
+				$rawValues = $valueSet->raw;
+				foreach ($rawValues as $val) {
+					$values[] = $this->convertValueExpression($val);
 				}
-				$all_values[] = $values;
+				$allValues[] = $values;
 			}
 		}
 
 		// Build INSERT statement.
 		$platform     = $this->connection->getDatabasePlatform();
-		$quoted_table = $platform->quoteIdentifier($table);
+		$quotedTable = $platform->quoteIdentifier($table);
 
-		$quoted_columns = \array_map(
+		$quotedColumns = \array_map(
 			fn($col) => $platform->quoteIdentifier($col),
 			$columns
 		);
 
-		$sql_parts = [];
-		foreach ($all_values as $values) {
-			$sql_parts[] = '(' . \implode(', ', $values) . ')';
+		$sqlParts = [];
+		foreach ($allValues as $values) {
+			$sqlParts[] = '(' . \implode(', ', $values) . ')';
 		}
 
 		// Handle INSERT IGNORE for SQLite.
-		$insert_keyword = 'INSERT';
+		$insertKeyword = 'INSERT';
 		if (! empty($stmt->options) && $stmt->options->has('IGNORE')) {
-			$platform_name = $this->get_platform_name();
-			if ('sqlite' === $platform_name) {
-				$insert_keyword = 'INSERT OR IGNORE';
+			$platformName = $this->getPlatformName();
+			if ('sqlite' === $platformName) {
+				$insertKeyword = 'INSERT OR IGNORE';
 			} else {
-				$insert_keyword = 'INSERT IGNORE';
+				$insertKeyword = 'INSERT IGNORE';
 			}
 		}
 
 		return \sprintf(
 			'%s INTO %s (%s) VALUES %s',
-			$insert_keyword,
-			$quoted_table,
-			\implode(', ', $quoted_columns),
-			\implode(', ', $sql_parts)
+			$insertKeyword,
+			$quotedTable,
+			\implode(', ', $quotedColumns),
+			\implode(', ', $sqlParts)
 		);
 	}
 
@@ -273,7 +273,7 @@ class QueryConverter
 	 * @param UpdateStatement $stmt The parsed UPDATE statement.
 	 * @return string The converted SQL.
 	 */
-	protected function convert_update(UpdateStatement $stmt): string
+	protected function convertUpdate(UpdateStatement $stmt): string
 	{
 		$qb = $this->connection->createQueryBuilder();
 
@@ -286,21 +286,21 @@ class QueryConverter
 		// SET clause.
 		if (! empty($stmt->set)) {
 			foreach ($stmt->set as $set) {
-				$qb->set($set->column, $this->convert_value_expression($set->value));
+				$qb->set($set->column, $this->convertValueExpression($set->value));
 			}
 		}
 
 		// WHERE clause.
 		if (! empty($stmt->where)) {
-			$where_parts = [];
+			$whereParts = [];
 			foreach ($stmt->where as $cond) {
 				if ($cond->isOperator) {
-					$where_parts[] = $cond->expr;
+					$whereParts[] = $cond->expr;
 				} else {
-					$where_parts[] = $this->convert_condition_expression($cond->expr);
+					$whereParts[] = $this->convertConditionExpression($cond->expr);
 				}
 			}
-			$qb->where(\implode(' ', $where_parts));
+			$qb->where(\implode(' ', $whereParts));
 		}
 
 		// ORDER BY clause.
@@ -324,7 +324,7 @@ class QueryConverter
 	 * @param DeleteStatement $stmt The parsed DELETE statement.
 	 * @return string The converted SQL.
 	 */
-	protected function convert_delete(DeleteStatement $stmt): string
+	protected function convertDelete(DeleteStatement $stmt): string
 	{
 		$qb = $this->connection->createQueryBuilder();
 
@@ -336,15 +336,15 @@ class QueryConverter
 
 		// WHERE clause.
 		if (! empty($stmt->where)) {
-			$where_parts = [];
+			$whereParts = [];
 			foreach ($stmt->where as $cond) {
 				if ($cond->isOperator) {
-					$where_parts[] = $cond->expr;
+					$whereParts[] = $cond->expr;
 				} else {
-					$where_parts[] = $this->convert_condition_expression($cond->expr);
+					$whereParts[] = $this->convertConditionExpression($cond->expr);
 				}
 			}
-			$qb->where(\implode(' ', $where_parts));
+			$qb->where(\implode(' ', $whereParts));
 		}
 
 		// ORDER BY clause.
@@ -368,7 +368,7 @@ class QueryConverter
 	 * @param ReplaceStatement $stmt The parsed REPLACE statement.
 	 * @return string The converted SQL.
 	 */
-	protected function convert_replace(ReplaceStatement $stmt): string
+	protected function convertReplace(ReplaceStatement $stmt): string
 	{
 		$table = $stmt->into->dest->table ?? '';
 
@@ -381,52 +381,52 @@ class QueryConverter
 		}
 
 		// Get values - use raw to preserve quotes.
-		$all_values = [];
+		$allValues = [];
 		if (! empty($stmt->values)) {
-			foreach ($stmt->values as $value_set) {
+			foreach ($stmt->values as $valueSet) {
 				$values = [];
 				// Use raw values to preserve string quotes.
-				/** @var \PhpMyAdmin\SqlParser\Components\ArrayObj $value_set */
-				$raw_values = $value_set->raw;
-				foreach ($raw_values as $val) {
-					$values[] = $this->convert_value_expression($val);
+				/** @var \PhpMyAdmin\SqlParser\Components\ArrayObj $valueSet */
+				$rawValues = $valueSet->raw;
+				foreach ($rawValues as $val) {
+					$values[] = $this->convertValueExpression($val);
 				}
-				$all_values[] = $values;
+				$allValues[] = $values;
 			}
 		}
 
 		$platform     = $this->connection->getDatabasePlatform();
-		$quoted_table = $platform->quoteIdentifier($table);
+		$quotedTable = $platform->quoteIdentifier($table);
 
-		$quoted_columns = \array_map(
+		$quotedColumns = \array_map(
 			fn($col) => $platform->quoteIdentifier($col),
 			$columns
 		);
 
-		$sql_parts = [];
-		foreach ($all_values as $values) {
-			$sql_parts[] = '(' . \implode(', ', $values) . ')';
+		$sqlParts = [];
+		foreach ($allValues as $values) {
+			$sqlParts[] = '(' . \implode(', ', $values) . ')';
 		}
 
 		// REPLACE INTO is MySQL-specific. Convert for other platforms.
-		$platform_name = $this->get_platform_name();
+		$platformName = $this->getPlatformName();
 
-		if ('sqlite' === $platform_name) {
+		if ('sqlite' === $platformName) {
 			// SQLite uses INSERT OR REPLACE.
 			return \sprintf(
 				'INSERT OR REPLACE INTO %s (%s) VALUES %s',
-				$quoted_table,
-				\implode(', ', $quoted_columns),
-				\implode(', ', $sql_parts)
+				$quotedTable,
+				\implode(', ', $quotedColumns),
+				\implode(', ', $sqlParts)
 			);
 		}
 
 		// For MySQL, keep as REPLACE.
 		return \sprintf(
 			'REPLACE INTO %s (%s) VALUES %s',
-			$quoted_table,
-			\implode(', ', $quoted_columns),
-			\implode(', ', $sql_parts)
+			$quotedTable,
+			\implode(', ', $quotedColumns),
+			\implode(', ', $sqlParts)
 		);
 	}
 
@@ -436,13 +436,13 @@ class QueryConverter
 	 * @param Expression $expr The expression.
 	 * @return string The SQL string.
 	 */
-	protected function convert_expression(Expression $expr): string
+	protected function convertExpression(Expression $expr): string
 	{
 		$result = $expr->expr;
 
 		// Handle function calls.
 		if (! empty($expr->function)) {
-			$result = $this->function_mapper->translate($result);
+			$result = $this->functionMapper->translate($result);
 		}
 
 		// Handle alias.
@@ -459,9 +459,9 @@ class QueryConverter
 	 * @param string $expr The condition expression.
 	 * @return string The converted expression.
 	 */
-	protected function convert_condition_expression(string $expr): string
+	protected function convertConditionExpression(string $expr): string
 	{
-		return $this->function_mapper->translate($expr);
+		return $this->functionMapper->translate($expr);
 	}
 
 	/**
@@ -470,11 +470,11 @@ class QueryConverter
 	 * @param mixed $val The value.
 	 * @return string The SQL representation.
 	 */
-	protected function convert_value_expression(mixed $val): string
+	protected function convertValueExpression(mixed $val): string
 	{
 		if (\is_string($val)) {
 			// Check if it's a function call.
-			return $this->function_mapper->translate($val);
+			return $this->functionMapper->translate($val);
 		}
 
 		return (string) $val;
@@ -486,7 +486,7 @@ class QueryConverter
 	 * @param Expression $expr The expression.
 	 * @return array{table: string, alias: string|null} Table info.
 	 */
-	protected function get_table_reference(Expression $expr): array
+	protected function getTableReference(Expression $expr): array
 	{
 		return [
 			'table' => $expr->table ?? $expr->expr,
@@ -499,7 +499,7 @@ class QueryConverter
 	 *
 	 * @return string Platform name (mysql, sqlite, pgsql).
 	 */
-	protected function get_platform_name(): string
+	protected function getPlatformName(): string
 	{
 		$platform = $this->connection->getDatabasePlatform();
 		$class    = \get_class($platform);

@@ -45,11 +45,11 @@ require_once WP_DBAL_PLUGIN_DIR . 'includes/Translator/QueryConverter.php';
 require_once WP_DBAL_PLUGIN_DIR . 'includes/class-wp-dbal-db.php';
 
 // Determine which database engine to use.
-$db_engine = \defined('DB_ENGINE') ? \strtolower(DB_ENGINE) : 'mysql';
+$dbEngine = \defined('DB_ENGINE') ? \strtolower(DB_ENGINE) : 'mysql';
 
 // Create the global $wpdb instance.
 // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited
-$wpdb = new WP_DBAL\WP_DBAL_DB($db_engine);
+$wpdb = new WP_DBAL\WP_DBAL_DB($dbEngine);
 
 // Set up the database connection.
 // This is normally called by wp-settings.php, but we need to do it here

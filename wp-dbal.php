@@ -53,7 +53,7 @@ final class Plugin
 	 *
 	 * @return Plugin
 	 */
-	public static function get_instance(): Plugin
+	public static function getInstance(): Plugin
 	{
 		if (null === self::$instance) {
 			self::$instance = new self();
@@ -66,7 +66,7 @@ final class Plugin
 	 */
 	private function __construct()
 	{
-		$this->init_hooks();
+		$this->initHooks();
 	}
 
 	/**
@@ -74,13 +74,13 @@ final class Plugin
 	 *
 	 * @return void
 	 */
-	private function init_hooks(): void
+	private function initHooks(): void
 	{
 		\register_activation_hook(WP_DBAL_PLUGIN_FILE, [ $this, 'activate' ]);
 		\register_deactivation_hook(WP_DBAL_PLUGIN_FILE, [ $this, 'deactivate' ]);
 
-		\add_action('admin_menu', [ $this, 'add_admin_menu' ]);
-		\add_action('admin_notices', [ $this, 'admin_notices' ]);
+		\add_action('admin_menu', [ $this, 'addAdminMenu' ]);
+		\add_action('admin_notices', [ $this, 'adminNotices' ]);
 	}
 
 	/**
@@ -91,11 +91,11 @@ final class Plugin
 	public function activate(): void
 	{
 		// Check if db.php drop-in already exists.
-		$db_dropin = WP_CONTENT_DIR . '/db.php';
+		$dbDropin = WP_CONTENT_DIR . '/db.php';
 
-		if (\file_exists($db_dropin)) {
+		if (\file_exists($dbDropin)) {
 			// Check if it's our drop-in.
-			$content = \file_get_contents($db_dropin);
+			$content = \file_get_contents($dbDropin);
 			if (false === \strpos($content, 'WP_DBAL')) {
 				// Another plugin's db.php - don't overwrite.
 				\set_transient('wp_dbal_activation_error', 'db_exists', 60);
@@ -104,7 +104,7 @@ final class Plugin
 		}
 
 		// Copy our db.php drop-in.
-		$this->install_dropin();
+		$this->installDropin();
 	}
 
 	/**
@@ -114,7 +114,7 @@ final class Plugin
 	 */
 	public function deactivate(): void
 	{
-		$this->remove_dropin();
+		$this->removeDropin();
 	}
 
 	/**
@@ -122,7 +122,7 @@ final class Plugin
 	 *
 	 * @return bool
 	 */
-	public function install_dropin(): bool
+	public function installDropin(): bool
 	{
 		$source = WP_DBAL_PLUGIN_DIR . 'db.copy';
 		$dest   = WP_CONTENT_DIR . '/db.php';
@@ -143,21 +143,21 @@ final class Plugin
 	 *
 	 * @return bool
 	 */
-	public function remove_dropin(): bool
+	public function removeDropin(): bool
 	{
-		$db_dropin = WP_CONTENT_DIR . '/db.php';
+		$dbDropin = WP_CONTENT_DIR . '/db.php';
 
-		if (! \file_exists($db_dropin)) {
+		if (! \file_exists($dbDropin)) {
 			return true;
 		}
 
 		// Only remove if it's our drop-in.
-		$content = \file_get_contents($db_dropin);
+		$content = \file_get_contents($dbDropin);
 		if (false === \strpos($content, 'WP_DBAL')) {
 			return false;
 		}
 
-		return \unlink($db_dropin);
+		return \unlink($dbDropin);
 	}
 
 	/**
@@ -165,15 +165,15 @@ final class Plugin
 	 *
 	 * @return bool
 	 */
-	public function is_dropin_installed(): bool
+	public function isDropinInstalled(): bool
 	{
-		$db_dropin = WP_CONTENT_DIR . '/db.php';
+		$dbDropin = WP_CONTENT_DIR . '/db.php';
 
-		if (! \file_exists($db_dropin)) {
+		if (! \file_exists($dbDropin)) {
 			return false;
 		}
 
-		$content = \file_get_contents($db_dropin);
+		$content = \file_get_contents($dbDropin);
 		return false !== \strpos($content, 'WP_DBAL');
 	}
 
@@ -182,14 +182,14 @@ final class Plugin
 	 *
 	 * @return void
 	 */
-	public function add_admin_menu(): void
+	public function addAdminMenu(): void
 	{
 		\add_management_page(
 			\__('WP-DBAL Settings', 'wp-dbal'),
 			\__('WP-DBAL', 'wp-dbal'),
 			'manage_options',
 			'wp-dbal',
-			[ $this, 'render_admin_page' ]
+			[ $this, 'renderAdminPage' ]
 		);
 	}
 
@@ -198,7 +198,7 @@ final class Plugin
 	 *
 	 * @return void
 	 */
-	public function admin_notices(): void
+	public function adminNotices(): void
 	{
 		$error = \get_transient('wp_dbal_activation_error');
 		if ('db_exists' === $error) {
@@ -209,7 +209,7 @@ final class Plugin
 		}
 
 		// Warning if drop-in is not installed.
-		if (! $this->is_dropin_installed() && \current_user_can('manage_options')) {
+		if (! $this->isDropinInstalled() && \current_user_can('manage_options')) {
 			echo '<div class="notice notice-warning"><p>';
 			\esc_html_e('WP-DBAL: The db.php drop-in is not installed. The plugin will not function without it.', 'wp-dbal');
 			echo ' <a href="' . \esc_url(\admin_url('tools.php?page=wp-dbal')) . '">';
@@ -223,21 +223,22 @@ final class Plugin
 	 *
 	 * @return void
 	 */
-	public function render_admin_page(): void
+	public function renderAdminPage(): void
 	{
 		// Handle actions.
 		if (isset($_POST['wp_dbal_action']) && \check_admin_referer('wp_dbal_admin')) {
 			$action = \sanitize_text_field(\wp_unslash($_POST['wp_dbal_action']));
 			if ('install_dropin' === $action) {
-				$this->install_dropin();
+				$this->installDropin();
 			} elseif ('remove_dropin' === $action) {
-				$this->remove_dropin();
+				$this->removeDropin();
 			}
 		}
 
-		$dropin_installed = $this->is_dropin_installed();
-		$db_engine        = \defined('DB_ENGINE') ? DB_ENGINE : 'mysql';
+		$dropinInstalled = $this->isDropinInstalled();
+		$dbEngine        = \defined('DB_ENGINE') ? DB_ENGINE : 'mysql';
 
+		// phpcs:disable Generic.Files.InlineHTML.Found -- Admin page template
 		?>
 		<div class="wrap">
 			<h1><?php \esc_html_e('WP-DBAL Settings', 'wp-dbal'); ?></h1>
@@ -248,7 +249,7 @@ final class Plugin
 					<tr>
 						<th><?php \esc_html_e('Drop-in Status', 'wp-dbal'); ?></th>
 						<td>
-							<?php if ($dropin_installed) : ?>
+							<?php if ($dropinInstalled) : ?>
 								<span style="color: green;">&#10003; <?php \esc_html_e('Installed', 'wp-dbal'); ?></span>
 							<?php else : ?>
 								<span style="color: red;">&#10007; <?php \esc_html_e('Not Installed', 'wp-dbal'); ?></span>
@@ -257,7 +258,7 @@ final class Plugin
 					</tr>
 					<tr>
 						<th><?php \esc_html_e('Database Engine', 'wp-dbal'); ?></th>
-						<td><code><?php echo \esc_html($db_engine); ?></code></td>
+						<td><code><?php echo \esc_html($dbEngine); ?></code></td>
 					</tr>
 					<tr>
 						<th><?php \esc_html_e('DBAL Version', 'wp-dbal'); ?></th>
@@ -275,7 +276,7 @@ final class Plugin
 
 				<form method="post">
 					<?php \wp_nonce_field('wp_dbal_admin'); ?>
-					<?php if ($dropin_installed) : ?>
+					<?php if ($dropinInstalled) : ?>
 						<input type="hidden" name="wp_dbal_action" value="remove_dropin">
 						<button type="submit" class="button button-secondary">
 							<?php \esc_html_e('Remove Drop-in', 'wp-dbal'); ?>
@@ -309,8 +310,9 @@ define( 'DB_ENGINE', 'mysql' );
 			</div>
 		</div>
 		<?php
+		// phpcs:enable Generic.Files.InlineHTML.Found
 	}
 }
 
 // Initialize plugin.
-Plugin::get_instance();
+Plugin::getInstance();
