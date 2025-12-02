@@ -1,0 +1,35 @@
+<?php
+/**
+ * WP-DBAL Database Drop-in
+ *
+ * This file replaces WordPress's default database layer with a Doctrine DBAL-powered
+ * abstraction that supports multiple database backends.
+ *
+ * @package WP_DBAL
+ * @version 0.1.0
+ */
+
+// Prevent direct access.
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+// WP-DBAL Drop-in identifier (do not remove - used to detect our drop-in).
+define( 'WP_DBAL_DROPIN', true );
+define( 'WP_DBAL_DROPIN_VERSION', '0.1.0' );
+
+// Path to the WP-DBAL plugin directory.
+// This is replaced during installation with the actual path.
+$wp_dbal_plugin_dir = '{PLUGIN_DIR}';
+
+// Verify the plugin directory exists.
+if ( ! is_dir( $wp_dbal_plugin_dir ) ) {
+	// Plugin was removed but drop-in remains - fall back to default wpdb.
+	return;
+}
+
+// Load the DBAL implementation.
+$wp_dbal_loader = $wp_dbal_plugin_dir . 'includes/load.php';
+if ( file_exists( $wp_dbal_loader ) ) {
+	require_once $wp_dbal_loader;
+}

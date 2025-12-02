@@ -1,0 +1,12 @@
+parameters:
+    level: 6
+    paths:
+        - includes
+    scanDirectories:
+        - vendor
+    bootstrapFiles:
+        - vendor/autoload.php
+    ignoreErrors:
+        -
+            identifier: missingType.iterableValue
+        - '#Constant WPINC not found#'
