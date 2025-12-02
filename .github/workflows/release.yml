@@ -1,0 +1,94 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    name: Build Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          extensions: mbstring, intl
+          tools: composer:v2
+
+      - name: Validate composer.json
+        run: composer validate --strict
+
+      - name: Install production dependencies
+        run: composer install --no-dev --prefer-dist --optimize-autoloader --no-progress
+
+      - name: Get plugin version
+        id: version
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          # Remove 'v' prefix if present
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create distribution directory
+        run: |
+          mkdir -p dist/wp-dbal
+
+      - name: Copy files to distribution
+        run: |
+          # Copy main plugin files
+          cp -r includes dist/wp-dbal/
+          cp -r vendor dist/wp-dbal/
+          cp wp-dbal.php dist/wp-dbal/
+          cp db.copy dist/wp-dbal/ 2>/dev/null || true
+          cp constants.php dist/wp-dbal/ 2>/dev/null || true
+          cp composer.json dist/wp-dbal/
+          cp LICENSE dist/wp-dbal/ 2>/dev/null || true
+          cp README.md dist/wp-dbal/ 2>/dev/null || true
+
+      - name: Remove development files from vendor
+        run: |
+          cd dist/wp-dbal
+          # Remove development-only directories
+          find vendor -type d -name ".git" -exec rm -rf {} + 2>/dev/null || true
+          find vendor -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
+          find vendor -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
+          find vendor -type d -name "Tests" -exec rm -rf {} + 2>/dev/null || true
+          find vendor -type d -name "Test" -exec rm -rf {} + 2>/dev/null || true
+          find vendor -type d -name "docs" -exec rm -rf {} + 2>/dev/null || true
+          find vendor -type d -name "doc" -exec rm -rf {} + 2>/dev/null || true
+          find vendor -type d -name "examples" -exec rm -rf {} + 2>/dev/null || true
+          # Remove development files
+          find vendor -name "*.md" -delete 2>/dev/null || true
+          find vendor -name "phpunit.xml*" -delete 2>/dev/null || true
+          find vendor -name "phpstan.neon*" -delete 2>/dev/null || true
+          find vendor -name ".php-cs-fixer*" -delete 2>/dev/null || true
+          find vendor -name "Makefile" -delete 2>/dev/null || true
+          find vendor -name "CHANGELOG*" -delete 2>/dev/null || true
+          find vendor -name "UPGRADE*" -delete 2>/dev/null || true
+
+      - name: Create ZIP archive
+        run: |
+          cd dist
+          zip -r wp-dbal-${{ steps.version.outputs.version }}.zip wp-dbal
+
+      - name: Upload release asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: dist/wp-dbal-${{ steps.version.outputs.version }}.zip
+          asset_name: wp-dbal-${{ steps.version.outputs.version }}.zip
+          asset_content_type: application/zip
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wp-dbal-${{ steps.version.outputs.version }}
+          path: dist/wp-dbal-${{ steps.version.outputs.version }}.zip
+          retention-days: 30
