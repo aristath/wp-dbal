@@ -4,6 +4,9 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build Release
@@ -77,14 +80,12 @@ jobs:
           zip -r wp-dbal-${{ steps.version.outputs.version }}.zip wp-dbal
 
       - name: Upload release asset
-        uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: dist/wp-dbal-${{ steps.version.outputs.version }}.zip
-          asset_name: wp-dbal-${{ steps.version.outputs.version }}.zip
-          asset_content_type: application/zip
+        run: |
+          gh release upload ${{ github.event.release.tag_name }} \
+            dist/wp-dbal-${{ steps.version.outputs.version }}.zip \
+            --clobber
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
