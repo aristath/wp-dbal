@@ -88,6 +88,11 @@ class QueryConverter {
 	protected function convert_select( SelectStatement $stmt ): string {
 		$qb = $this->connection->createQueryBuilder();
 
+		// Handle SELECT DISTINCT.
+		if ( ! empty( $stmt->options ) && $stmt->options->has( 'DISTINCT' ) ) {
+			$qb->distinct();
+		}
+
 		// SELECT columns.
 		$columns = [];
 		if ( ! empty( $stmt->expr ) ) {
