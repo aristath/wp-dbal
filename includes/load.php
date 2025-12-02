@@ -1,4 +1,5 @@
 <?php
+
 /**
  * WP-DBAL Loader
  *
@@ -11,22 +12,22 @@
 declare(strict_types=1);
 
 // Prevent direct access.
-if ( ! defined( 'ABSPATH' ) ) {
+if (! \defined('ABSPATH')) {
 	exit;
 }
 
 // Define the plugin directory if not already defined.
-if ( ! defined( 'WP_DBAL_PLUGIN_DIR' ) ) {
-	define( 'WP_DBAL_PLUGIN_DIR', dirname( __DIR__ ) . '/' );
+if (! \defined('WP_DBAL_PLUGIN_DIR')) {
+	\define('WP_DBAL_PLUGIN_DIR', \dirname(__DIR__) . '/');
 }
 
 // Load Composer autoloader.
 $autoloader = WP_DBAL_PLUGIN_DIR . 'vendor/autoload.php';
-if ( ! file_exists( $autoloader ) ) {
+if (! \file_exists($autoloader)) {
 	// Composer dependencies not installed - cannot proceed.
 	// WordPress will use the default wpdb.
-	if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
-		error_log( 'WP-DBAL: Composer autoloader not found. Run "composer install" in the plugin directory.' );
+	if (\defined('WP_DEBUG') && WP_DEBUG) {
+		\error_log('WP-DBAL: Composer autoloader not found. Run "composer install" in the plugin directory.');
 	}
 	return;
 }
@@ -44,11 +45,11 @@ require_once WP_DBAL_PLUGIN_DIR . 'includes/Translator/QueryConverter.php';
 require_once WP_DBAL_PLUGIN_DIR . 'includes/class-wp-dbal-db.php';
 
 // Determine which database engine to use.
-$db_engine = defined( 'DB_ENGINE' ) ? strtolower( DB_ENGINE ) : 'mysql';
+$db_engine = \defined('DB_ENGINE') ? \strtolower(DB_ENGINE) : 'mysql';
 
 // Create the global $wpdb instance.
 // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited
-$wpdb = new WP_DBAL\WP_DBAL_DB( $db_engine );
+$wpdb = new WP_DBAL\WP_DBAL_DB($db_engine);
 
 // Set up the database connection.
 // This is normally called by wp-settings.php, but we need to do it here

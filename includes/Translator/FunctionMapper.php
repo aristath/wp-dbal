@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Function Mapper - Maps MySQL functions to platform-specific equivalents.
  *
@@ -14,8 +15,8 @@ use Doctrine\DBAL\Connection;
 /**
  * Maps MySQL functions to platform-specific SQL functions.
  */
-class FunctionMapper {
-
+class FunctionMapper
+{
 	/**
 	 * DBAL Connection.
 	 *
@@ -180,7 +181,8 @@ class FunctionMapper {
 	 *
 	 * @param Connection $connection DBAL connection.
 	 */
-	public function __construct( Connection $connection ) {
+	public function __construct(Connection $connection)
+	{
 		$this->connection = $connection;
 		$this->platform   = $this->detect_platform();
 	}
@@ -191,8 +193,9 @@ class FunctionMapper {
 	 * @param string $expression The SQL expression.
 	 * @return string The translated expression.
 	 */
-	public function translate( string $expression ): string {
-		if ( 'mysql' === $this->platform ) {
+	public function translate(string $expression): string
+	{
+		if ('mysql' === $this->platform) {
 			// No translation needed for MySQL.
 			return $expression;
 		}
@@ -200,38 +203,38 @@ class FunctionMapper {
 		$result = $expression;
 
 		// Handle CONCAT specially first (needs proper parentheses matching).
-		if ( 'sqlite' === $this->platform && preg_match( '/\bCONCAT\s*\(/i', $result ) ) {
-			$result = $this->translate_concat( $result );
+		if ('sqlite' === $this->platform && \preg_match('/\bCONCAT\s*\(/i', $result)) {
+			$result = $this->translate_concat($result);
 		}
 
 		// Handle LIKE escape sequences for SQLite.
 		// MySQL uses \_ and \% by default, SQLite needs ESCAPE clause.
-		if ( 'sqlite' === $this->platform ) {
-			$result = $this->translate_like_escapes( $result );
+		if ('sqlite' === $this->platform) {
+			$result = $this->translate_like_escapes($result);
 		}
 
 		// Apply simple replacements.
 		$mappings = self::$mappings[ $this->platform ] ?? [];
-		foreach ( $mappings as $mysql => $replacement ) {
-			$result = str_ireplace( $mysql, $replacement, $result );
+		foreach ($mappings as $mysql => $replacement) {
+			$result = \str_ireplace($mysql, $replacement, $result);
 		}
 
 		// Apply pattern-based replacements.
 		$patterns = self::$patterns[ $this->platform ] ?? [];
-		foreach ( $patterns as $pattern => $replacement ) {
+		foreach ($patterns as $pattern => $replacement) {
 			// Skip CONCAT pattern - handled above.
-			if ( str_contains( $pattern, 'CONCAT' ) ) {
+			if (\str_contains($pattern, 'CONCAT')) {
 				continue;
 			}
 
-			if ( is_string( $replacement ) && str_starts_with( $replacement, 'sqlite_' ) ) {
+			if (\is_string($replacement) && \str_starts_with($replacement, 'sqlite_')) {
 				// Special handler method.
-				$result = $this->apply_special_handler( $result, $pattern, $replacement );
-			} elseif ( is_string( $replacement ) && str_starts_with( $replacement, 'pgsql_' ) ) {
+				$result = $this->apply_special_handler($result, $pattern, $replacement);
+			} elseif (\is_string($replacement) && \str_starts_with($replacement, 'pgsql_')) {
 				// Special handler method.
-				$result = $this->apply_special_handler( $result, $pattern, $replacement );
+				$result = $this->apply_special_handler($result, $pattern, $replacement);
 			} else {
-				$result = preg_replace( $pattern, $replacement, $result ) ?? $result;
+				$result = \preg_replace($pattern, $replacement, $result) ?? $result;
 			}
 		}
 
@@ -246,10 +249,11 @@ class FunctionMapper {
 	 * @param string $handler    The handler name.
 	 * @return string The translated expression.
 	 */
-	protected function apply_special_handler( string $expression, string $pattern, string $handler ): string {
-		return preg_replace_callback(
+	protected function apply_special_handler(string $expression, string $pattern, string $handler): string
+	{
+		return \preg_replace_callback(
 			$pattern,
-			fn( $matches ) => $this->$handler( $matches ),
+			fn($matches) => $this->$handler($matches),
 			$expression
 		) ?? $expression;
 	}
@@ -260,7 +264,8 @@ class FunctionMapper {
 	 * @param array<int, string> $matches Regex matches.
 	 * @return string Placeholder - actual replacement done in translate().
 	 */
-	protected function sqlite_concat_start( array $matches ): string {
+	protected function sqlite_concat_start(array $matches): string
+	{
 		// This is just a marker - actual handling is done in translate().
 		return $matches[0];
 	}
@@ -274,14 +279,15 @@ class FunctionMapper {
 	 * @param string $expression The expression containing LIKE patterns.
 	 * @return string Translated expression with ESCAPE clauses added.
 	 */
-	protected function translate_like_escapes( string $expression ): string {
+	protected function translate_like_escapes(string $expression): string
+	{
 		// Pattern to find LIKE/NOT LIKE followed by a string literal containing backslash escapes.
 		// We need to handle: LIKE '\_%', LIKE '%\_%', NOT LIKE '\_%', etc.
 		$pattern = '/(\bLIKE\s+)(\'[^\']*\\\\[_%][^\']*\'|"[^"]*\\\\[_%][^"]*")/i';
 
-		return preg_replace_callback(
+		return \preg_replace_callback(
 			$pattern,
-			function ( $matches ) {
+			function ($matches) {
 				$like_keyword = $matches[1];
 				$pattern_str = $matches[2];
 
@@ -299,60 +305,61 @@ class FunctionMapper {
 	 * @param string $expression The expression containing CONCAT.
 	 * @return string Translated expression.
 	 */
-	protected function translate_concat( string $expression ): string {
+	protected function translate_concat(string $expression): string
+	{
 		// Find CONCAT( and match the closing parenthesis properly.
 		$pattern = '/\bCONCAT\s*\(/i';
 
-		while ( preg_match( $pattern, $expression, $matches, PREG_OFFSET_CAPTURE ) ) {
+		while (\preg_match($pattern, $expression, $matches, PREG_OFFSET_CAPTURE)) {
 			$start = $matches[0][1];
-			$open_paren = $start + strlen( $matches[0][0] ) - 1;
+			$open_paren = $start + \strlen($matches[0][0]) - 1;
 
 			// Find the matching closing parenthesis.
 			$depth = 1;
 			$pos = $open_paren + 1;
-			$len = strlen( $expression );
+			$len = \strlen($expression);
 			$in_string = false;
 			$string_char = '';
 
-			while ( $pos < $len && $depth > 0 ) {
+			while ($pos < $len && $depth > 0) {
 				$char = $expression[ $pos ];
 
 				// Handle string literals.
-				if ( ! $in_string && ( "'" === $char || '"' === $char ) ) {
+				if (! $in_string && ( "'" === $char || '"' === $char )) {
 					$in_string = true;
 					$string_char = $char;
-				} elseif ( $in_string && $char === $string_char ) {
+				} elseif ($in_string && $char === $string_char) {
 					// Check for escaped quote.
-					if ( $pos + 1 < $len && $expression[ $pos + 1 ] === $string_char ) {
+					if ($pos + 1 < $len && $expression[ $pos + 1 ] === $string_char) {
 						$pos++; // Skip escaped quote.
 					} else {
 						$in_string = false;
 					}
-				} elseif ( ! $in_string ) {
-					if ( '(' === $char ) {
+				} elseif (! $in_string) {
+					if ('(' === $char) {
 						$depth++;
-					} elseif ( ')' === $char ) {
+					} elseif (')' === $char) {
 						$depth--;
 					}
 				}
 				$pos++;
 			}
 
-			if ( 0 === $depth ) {
+			if (0 === $depth) {
 				// Extract the arguments.
-				$args_str = substr( $expression, $open_paren + 1, $pos - $open_paren - 2 );
+				$args_str = \substr($expression, $open_paren + 1, $pos - $open_paren - 2);
 
 				// Parse arguments respecting parentheses and quotes.
-				$args = $this->parse_function_args( $args_str );
+				$args = $this->parse_function_args($args_str);
 
 				// Translate each argument recursively.
-				$translated_args = array_map( fn( $arg ) => $this->translate( trim( $arg ) ), $args );
+				$translated_args = \array_map(fn($arg) => $this->translate(\trim($arg)), $args);
 
 				// Build SQLite concatenation.
-				$replacement = '(' . implode( ' || ', $translated_args ) . ')';
+				$replacement = '(' . \implode(' || ', $translated_args) . ')';
 
 				// Replace in expression.
-				$expression = substr( $expression, 0, $start ) . $replacement . substr( $expression, $pos );
+				$expression = \substr($expression, 0, $start) . $replacement . \substr($expression, $pos);
 			} else {
 				// Couldn't find matching paren - break to avoid infinite loop.
 				break;
@@ -368,39 +375,40 @@ class FunctionMapper {
 	 * @param string $args_str The arguments string.
 	 * @return array<string> Array of arguments.
 	 */
-	protected function parse_function_args( string $args_str ): array {
+	protected function parse_function_args(string $args_str): array
+	{
 		$args = [];
 		$current = '';
 		$depth = 0;
 		$in_string = false;
 		$string_char = '';
-		$len = strlen( $args_str );
+		$len = \strlen($args_str);
 
-		for ( $i = 0; $i < $len; $i++ ) {
+		for ($i = 0; $i < $len; $i++) {
 			$char = $args_str[ $i ];
 
 			// Handle string literals.
-			if ( ! $in_string && ( "'" === $char || '"' === $char ) ) {
+			if (! $in_string && ( "'" === $char || '"' === $char )) {
 				$in_string = true;
 				$string_char = $char;
 				$current .= $char;
-			} elseif ( $in_string && $char === $string_char ) {
+			} elseif ($in_string && $char === $string_char) {
 				$current .= $char;
 				// Check for escaped quote.
-				if ( $i + 1 < $len && $args_str[ $i + 1 ] === $string_char ) {
+				if ($i + 1 < $len && $args_str[ $i + 1 ] === $string_char) {
 					$current .= $args_str[ $i + 1 ];
 					$i++;
 				} else {
 					$in_string = false;
 				}
-			} elseif ( ! $in_string ) {
-				if ( '(' === $char ) {
+			} elseif (! $in_string) {
+				if ('(' === $char) {
 					$depth++;
 					$current .= $char;
-				} elseif ( ')' === $char ) {
+				} elseif (')' === $char) {
 					$depth--;
 					$current .= $char;
-				} elseif ( ',' === $char && 0 === $depth ) {
+				} elseif (',' === $char && 0 === $depth) {
 					$args[] = $current;
 					$current = '';
 				} else {
@@ -411,7 +419,7 @@ class FunctionMapper {
 			}
 		}
 
-		if ( '' !== $current ) {
+		if ('' !== $current) {
 			$args[] = $current;
 		}
 
@@ -424,14 +432,15 @@ class FunctionMapper {
 	 * @param array<int, string> $matches Regex matches.
 	 * @return string Translated expression.
 	 */
-	protected function sqlite_date_format( array $matches ): string {
-		$date   = trim( $matches[1] );
-		$format = trim( $matches[2], "\"'" );
+	protected function sqlite_date_format(array $matches): string
+	{
+		$date   = \trim($matches[1]);
+		$format = \trim($matches[2], "\"'");
 
 		// Convert MySQL format to SQLite strftime format.
 		$sqlite_format = $format;
-		foreach ( self::$mysql_to_sqlite_date_formats as $mysql => $sqlite ) {
-			$sqlite_format = str_replace( $mysql, $sqlite, $sqlite_format );
+		foreach (self::$mysql_to_sqlite_date_formats as $mysql => $sqlite) {
+			$sqlite_format = \str_replace($mysql, $sqlite, $sqlite_format);
 		}
 
 		return "strftime('{$sqlite_format}', {$date})";
@@ -443,12 +452,13 @@ class FunctionMapper {
 	 * @param array<int, string> $matches Regex matches.
 	 * @return string Translated expression.
 	 */
-	protected function sqlite_date_add( array $matches ): string {
-		$date   = trim( $matches[1] );
+	protected function sqlite_date_add(array $matches): string
+	{
+		$date   = \trim($matches[1]);
 		$amount = (int) $matches[2];
-		$unit   = strtolower( trim( $matches[3] ) );
+		$unit   = \strtolower(\trim($matches[3]));
 
-		$modifier = match ( $unit ) {
+		$modifier = match ($unit) {
 			'second', 'seconds' => "+{$amount} seconds",
 			'minute', 'minutes' => "+{$amount} minutes",
 			'hour', 'hours'     => "+{$amount} hours",
@@ -468,12 +478,13 @@ class FunctionMapper {
 	 * @param array<int, string> $matches Regex matches.
 	 * @return string Translated expression.
 	 */
-	protected function sqlite_date_sub( array $matches ): string {
-		$date   = trim( $matches[1] );
+	protected function sqlite_date_sub(array $matches): string
+	{
+		$date   = \trim($matches[1]);
 		$amount = (int) $matches[2];
-		$unit   = strtolower( trim( $matches[3] ) );
+		$unit   = \strtolower(\trim($matches[3]));
 
-		$modifier = match ( $unit ) {
+		$modifier = match ($unit) {
 			'second', 'seconds' => "-{$amount} seconds",
 			'minute', 'minutes' => "-{$amount} minutes",
 			'hour', 'hours'     => "-{$amount} hours",
@@ -495,26 +506,27 @@ class FunctionMapper {
 	 * @param array<int, string> $matches Regex matches.
 	 * @return string Translated expression.
 	 */
-	protected function sqlite_field( array $matches ): string {
-		$needle = trim( $matches[1] );
+	protected function sqlite_field(array $matches): string
+	{
+		$needle = \trim($matches[1]);
 		$list_str = $matches[2];
 
 		// Parse the list of values.
-		$values = $this->parse_function_args( $list_str );
+		$values = $this->parse_function_args($list_str);
 
-		if ( empty( $values ) ) {
+		if (empty($values)) {
 			return '0';
 		}
 
 		// Build CASE WHEN expression.
 		$cases = [];
-		foreach ( $values as $index => $value ) {
+		foreach ($values as $index => $value) {
 			$position = $index + 1;
-			$value = trim( $value );
+			$value = \trim($value);
 			$cases[] = "WHEN {$needle} = {$value} THEN {$position}";
 		}
 
-		return '(CASE ' . implode( ' ', $cases ) . ' ELSE 0 END)';
+		return '(CASE ' . \implode(' ', $cases) . ' ELSE 0 END)';
 	}
 
 	/**
@@ -525,26 +537,27 @@ class FunctionMapper {
 	 * @param array<int, string> $matches Regex matches.
 	 * @return string Translated expression.
 	 */
-	protected function sqlite_elt( array $matches ): string {
-		$index = trim( $matches[1] );
+	protected function sqlite_elt(array $matches): string
+	{
+		$index = \trim($matches[1]);
 		$list_str = $matches[2];
 
 		// Parse the list of values.
-		$values = $this->parse_function_args( $list_str );
+		$values = $this->parse_function_args($list_str);
 
-		if ( empty( $values ) ) {
+		if (empty($values)) {
 			return 'NULL';
 		}
 
 		// Build CASE WHEN expression.
 		$cases = [];
-		foreach ( $values as $i => $value ) {
+		foreach ($values as $i => $value) {
 			$position = $i + 1;
-			$value = trim( $value );
+			$value = \trim($value);
 			$cases[] = "WHEN {$index} = {$position} THEN {$value}";
 		}
 
-		return '(CASE ' . implode( ' ', $cases ) . ' ELSE NULL END)';
+		return '(CASE ' . \implode(' ', $cases) . ' ELSE NULL END)';
 	}
 
 	/**
@@ -553,9 +566,10 @@ class FunctionMapper {
 	 * @param array<int, string> $matches Regex matches.
 	 * @return string Translated expression.
 	 */
-	protected function pgsql_date_format( array $matches ): string {
-		$date   = trim( $matches[1] );
-		$format = trim( $matches[2], "\"'" );
+	protected function pgsql_date_format(array $matches): string
+	{
+		$date   = \trim($matches[1]);
+		$format = \trim($matches[2], "\"'");
 
 		// Convert MySQL format to PostgreSQL to_char format.
 		$pgsql_format = $format;
@@ -575,8 +589,8 @@ class FunctionMapper {
 			'%M' => 'Month',
 		];
 
-		foreach ( $conversions as $mysql => $pgsql ) {
-			$pgsql_format = str_replace( $mysql, $pgsql, $pgsql_format );
+		foreach ($conversions as $mysql => $pgsql) {
+			$pgsql_format = \str_replace($mysql, $pgsql, $pgsql_format);
 		}
 
 		return "to_char({$date}, '{$pgsql_format}')";
@@ -587,15 +601,16 @@ class FunctionMapper {
 	 *
 	 * @return string Platform name (mysql, sqlite, pgsql).
 	 */
-	protected function detect_platform(): string {
+	protected function detect_platform(): string
+	{
 		$platform = $this->connection->getDatabasePlatform();
-		$class    = get_class( $platform );
+		$class    = \get_class($platform);
 
-		return match ( true ) {
-			str_contains( $class, 'SQLite' )     => 'sqlite',
-			str_contains( $class, 'PostgreSQL' ) => 'pgsql',
-			str_contains( $class, 'MySQL' )      => 'mysql',
-			str_contains( $class, 'MariaDB' )    => 'mysql',
+		return match (true) {
+			\str_contains($class, 'SQLite')     => 'sqlite',
+			\str_contains($class, 'PostgreSQL') => 'pgsql',
+			\str_contains($class, 'MySQL')      => 'mysql',
+			\str_contains($class, 'MariaDB')    => 'mysql',
 			default                              => 'mysql',
 		};
 	}
