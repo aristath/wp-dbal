@@ -5,6 +5,12 @@
 	<!-- Files to check -->
 	<file>.</file>
 
+	<!-- Include db.copy which is a PHP file with non-standard extension -->
+	<file>db.copy</file>
+
+	<!-- Treat .copy files as PHP -->
+	<arg name="extensions" value="php,copy/php"/>
+
 	<!-- Exclude patterns -->
 	<exclude-pattern>*/vendor/*</exclude-pattern>
 	<exclude-pattern>*/node_modules/*</exclude-pattern>

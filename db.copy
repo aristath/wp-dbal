@@ -1,4 +1,5 @@
 <?php
+
 /**
  * WP-DBAL Database Drop-in
  *
@@ -10,26 +11,26 @@
  */
 
 // Prevent direct access.
-if ( ! \defined( 'ABSPATH' ) ) {
+if (! \defined('ABSPATH')) {
 	exit;
 }
 
 // WP-DBAL Drop-in identifier (do not remove - used to detect our drop-in).
-\define( 'WP_DBAL_DROPIN', true );
-\define( 'WP_DBAL_DROPIN_VERSION', '0.1.0' );
+\define('WP_DBAL_DROPIN', true);
+\define('WP_DBAL_DROPIN_VERSION', '0.1.0');
 
 // Path to the WP-DBAL plugin directory.
 // This is replaced during installation with the actual path.
 $wpDbalPluginDir = '{PLUGIN_DIR}';
 
 // Verify the plugin directory exists.
-if ( ! \is_dir( $wpDbalPluginDir ) ) {
+if (! \is_dir($wpDbalPluginDir)) {
 	// Plugin was removed but drop-in remains - fall back to default wpdb.
 	return;
 }
 
 // Load the DBAL implementation.
 $wpDbalLoader = $wpDbalPluginDir . 'includes/load.php';
-if ( \file_exists( $wpDbalLoader ) ) {
+if (\file_exists($wpDbalLoader)) {
 	\require_once $wpDbalLoader;
 }
