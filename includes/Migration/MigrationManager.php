@@ -578,9 +578,10 @@ class MigrationManager
 
 		$importer = new DataImporter();
 		$chunk = \array_shift($progress['data_chunks']);
+		$targetEngine = $progress['target_engine'] ?? '';
 		
 		try {
-			$importer->importTableChunk($targetConnection, $chunk['table'], $chunk['data']);
+			$importer->importTableChunk($targetConnection, $chunk['table'], $chunk['data'], $targetEngine);
 		} catch (\Exception $e) {
 			$progress['status'] = 'failed';
 			$progress['error'] = \sprintf(

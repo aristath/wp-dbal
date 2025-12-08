@@ -491,6 +491,10 @@ class WP_DBAL_DB extends \wpdb
 			case 'sqlite':
 				return '8.0.0-SQLite';
 
+			case 'd1':
+				// D1 is SQLite-based.
+				return '8.0.0-D1';
+
 			case 'pgsql':
 			case 'postgresql':
 				return '8.0.0-PostgreSQL';
@@ -539,7 +543,8 @@ class WP_DBAL_DB extends \wpdb
 				return true;
 
 			case 'sqlite':
-				// SQLite has limited capability support.
+			case 'd1':
+				// SQLite and D1 (SQLite-based) have limited capability support.
 				if (\in_array($capability, [ 'found_rows', 'utf8mb4' ], true)) {
 					return false;
 				}
@@ -812,6 +817,9 @@ class WP_DBAL_DB extends \wpdb
 				return 'FileDB 1.0.0';
 			case 'sqlite':
 				return 'SQLite 3.0';
+			case 'd1':
+				// D1 is SQLite-based.
+				return 'D1 1.0.0';
 			case 'pgsql':
 			case 'postgresql':
 				return 'PostgreSQL 12.0';

@@ -48,6 +48,35 @@ export default function MigrationUI({ currentEngine: propCurrentEngine, onConfig
 		}
 	}, [propCurrentEngine]);
 
+	// Pre-populate connection params from wp-config.php when target engine changes.
+	useEffect(() => {
+		if (!targetEngine) {
+			// Clear connection params if no target engine selected.
+			setConnectionParams({});
+			return;
+		}
+
+		// Fetch connection params for the selected target engine.
+		const fetchConnectionParams = async () => {
+			try {
+				const response = await apiFetch({
+					path: `/wp-dbal/v1/admin/configuration?db_engine=${targetEngine}`,
+				});
+
+				if (response.success && response.data?.connection_params) {
+					// Pre-populate with values from wp-config.php.
+					// Replace with fetched values to show defaults for the selected engine.
+					setConnectionParams(response.data.connection_params);
+				}
+			} catch (err) {
+				// Silently fail - user can still enter values manually.
+				console.error('Failed to fetch connection params:', err);
+			}
+		};
+
+		fetchConnectionParams();
+	}, [targetEngine]);
+
 	// Poll for progress if migration is running.
 	useEffect(() => {
 		if (!sessionId || !isMigrating) {

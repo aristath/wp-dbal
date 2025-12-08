@@ -27,21 +27,28 @@ class DataImporter
 	 * @param array<int, array<string, mixed>> $rows Rows to import.
 	 * @return void
 	 */
-	public function importTableChunk(Connection $connection, string $table, array $rows): void
+	public function importTableChunk(Connection $connection, string $table, array $rows, string $targetEngine = ''): void
 	{
+		\error_log(\sprintf('DataImporter: Starting import for table %s with %d rows (targetEngine: %s)', $table, \count($rows), $targetEngine));
+		
 		if (empty($rows)) {
 			return;
 		}
 
 		// Get table schema to identify auto-increment and NOT NULL columns.
-		$schemaManager = $connection->createSchemaManager();
-		$schema = $schemaManager->introspectSchema();
+		// For D1, skip schema introspection as it uses PRAGMA which triggers SQLITE_AUTH errors.
+		$isD1 = 'd1' === \strtolower($targetEngine);
 		$autoIncrementColumns = [];
 		$notNullColumns = [];
 		$primaryKeyColumns = [];
 		$columnTypes = [];
 		
-		if ($schema->hasTable($table)) {
+		if (! $isD1) {
+			// For non-D1 databases, use schema introspection.
+			$schemaManager = $connection->createSchemaManager();
+			$schema = $schemaManager->introspectSchema();
+			
+			if ($schema->hasTable($table)) {
 			$tableObj = $schema->getTable($table);
 			
 			// Get primary key columns from indexes.
@@ -89,8 +96,16 @@ class DataImporter
 				}
 			}
 			
-			\error_log(\sprintf('DEBUG DataImporter: Table %s - Auto-increment columns: %s', $table, \var_export($autoIncrementColumns, true)));
-			\error_log(\sprintf('DEBUG DataImporter: Table %s - NOT NULL columns: %s', $table, \var_export($notNullColumns, true)));
+				\error_log(\sprintf('DEBUG DataImporter: Table %s - Auto-increment columns: %s', $table, \var_export($autoIncrementColumns, true)));
+				\error_log(\sprintf('DEBUG DataImporter: Table %s - NOT NULL columns: %s', $table, \var_export($notNullColumns, true)));
+			}
+		} else {
+			// For D1, we can't use PRAGMA, so infer schema from data.
+			// This is less precise but avoids SQLITE_AUTH errors.
+			\error_log(\sprintf('DataImporter: Skipping schema introspection for D1 table %s (PRAGMA not supported)', $table));
+			
+			// For D1, we'll be more lenient - only skip NULL values for columns that look like auto-increment (id, *_id with integer values).
+			// We'll handle NOT NULL constraints by providing defaults when needed.
 		}
 
 		// Get all possible columns from all rows.
@@ -197,14 +212,19 @@ class DataImporter
 				$placeholders = \implode(', ', \array_fill(0, \count($columns), '?'));
 				
 				// Detect platform name by checking the class name.
+				// Note: D1 extends AbstractSQLiteDriver, so it will be detected as SQLite.
 				$platformClass = \get_class($platform);
 				$isSqlite = \str_contains($platformClass, 'SQLite');
+				$isD1 = 'd1' === \strtolower($targetEngine) || \str_contains($platformClass, 'D1');
 				
 				// Use INSERT OR IGNORE for SQLite to handle duplicate key errors gracefully.
+				// For D1, use regular INSERT as INSERT OR IGNORE may trigger SQLITE_AUTH errors.
 				$insertKeyword = 'INSERT';
-				if ($isSqlite) {
+				if ($isSqlite && ! $isD1) {
 					$insertKeyword = 'INSERT OR IGNORE';
 				}
+				
+				\error_log(\sprintf('DataImporter: Using %s for table %s (targetEngine: %s, isD1: %s)', $insertKeyword, $table, $targetEngine, $isD1 ? 'true' : 'false'));
 				
 				$sql = \sprintf(
 					'%s INTO %s (%s) VALUES (%s)',
@@ -226,7 +246,25 @@ class DataImporter
 					\error_log(\sprintf('DEBUG DataImporter: Column %s (index %d) = %s', $col, $idx, \var_export($valueToLog, true)));
 				}
 				
+				// For D1, try using the native connection's query method directly
+				// to avoid potential issues with DBAL's executeStatement parameter binding.
+				if ($isD1 && \method_exists($connection, 'getNativeConnection')) {
+					try {
+						$nativeConnection = $connection->getNativeConnection();
+						if ($nativeConnection instanceof \WP_DBAL\D1\HttpClient) {
+							\error_log(\sprintf('DataImporter: Using D1 native query method for table %s', $table));
+							$nativeConnection->query($sql, $values);
+							// Successfully executed via native method, move to next row.
+							continue;
+						}
+					} catch (\Exception $e) {
+						\error_log(\sprintf('DataImporter: D1 native query failed, falling back to executeStatement: %s', $e->getMessage()));
+						// Fall through to executeStatement below.
+					}
+				}
+				
 				// Use executeStatement with parameters array - DBAL will handle binding.
+				\error_log(\sprintf('DataImporter: Using executeStatement for table %s', $table));
 				$connection->executeStatement($sql, $values);
 			}
 			

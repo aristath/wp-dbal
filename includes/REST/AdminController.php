@@ -232,7 +232,15 @@ class AdminController
 	public function getConfiguration(WP_REST_Request $request): WP_REST_Response
 	{
 		$plugin = Plugin::getInstance();
-		$dbEngine = $plugin->getDbEngine();
+		
+		// Allow fetching config for a specific engine (for migration UI pre-population).
+		$requestedEngine = $request->get_param('db_engine');
+		if (! empty($requestedEngine)) {
+			$dbEngine = \strtolower($requestedEngine);
+		} else {
+			$dbEngine = $plugin->getDbEngine();
+		}
+		
 		$connectionParams = $this->readConnectionParams($dbEngine);
 
 		return new WP_REST_Response(

@@ -254,7 +254,8 @@ class QueryConverter
 			$sqlParts[] = '(' . \implode(', ', $values) . ')';
 		}
 
-		// Handle INSERT IGNORE for SQLite.
+		// Handle INSERT IGNORE for SQLite and D1 (SQLite-based).
+		// Note: D1 extends AbstractSQLiteDriver, so getPlatformName() returns 'sqlite' for D1.
 		$insertKeyword = 'INSERT';
 		if (! empty($stmt->options) && $stmt->options->has('IGNORE')) {
 			$platformName = $this->getPlatformName();
@@ -416,10 +417,11 @@ class QueryConverter
 		}
 
 		// REPLACE INTO is MySQL-specific. Convert for other platforms.
+		// Note: D1 extends AbstractSQLiteDriver, so getPlatformName() returns 'sqlite' for D1.
 		$platformName = $this->getPlatformName();
 
 		if ('sqlite' === $platformName) {
-			// SQLite uses INSERT OR REPLACE.
+			// SQLite and D1 (SQLite-based) use INSERT OR REPLACE.
 			return \sprintf(
 				'INSERT OR REPLACE INTO %s (%s) VALUES %s',
 				$quotedTable,

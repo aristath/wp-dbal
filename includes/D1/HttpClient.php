@@ -105,6 +105,18 @@ class HttpClient
 			$body['params'] = $this->normalizeParams($params);
 		}
 
+		// Log the request for debugging SQLITE_AUTH errors.
+		\error_log(\sprintf('D1 HttpClient: Executing SQL: %s', \substr($sql, 0, 500)));
+		if (! empty($params)) {
+			$paramsToLog = \array_map(function($param) {
+				if (\is_string($param) && \strlen($param) > 100) {
+					return \substr($param, 0, 100) . '... (truncated, length: ' . \strlen($param) . ')';
+				}
+				return $param;
+			}, $body['params']);
+			\error_log(\sprintf('D1 HttpClient: Parameters (%d): %s', \count($params), \var_export($paramsToLog, true)));
+		}
+
 		$response = $this->makeRequest($url, $body);
 
 		// D1 returns an array of results (one per statement).

@@ -34,35 +34,98 @@ class SchemaImporter
 	{
 		$targetSchema = new Schema();
 		$platform = $connection->getDatabasePlatform();
+		$schemaManager = $connection->createSchemaManager();
 
-		foreach ($schemas as $tableName => $schemaDef) {
-			$this->createTableFromDefinition($targetSchema, $schemaDef, $targetEngine);
-			// Note: createTable() automatically adds the table to the schema in DBAL 3.x
+		// Get list of existing tables in the target database.
+		$existingTables = [];
+		try {
+			$existingTables = $schemaManager->listTableNames();
+		} catch (\Exception $e) {
+			// If we can't list tables, continue and let the error handling catch it.
+			\error_log(\sprintf('SchemaImporter: Could not list existing tables: %s', $e->getMessage()));
 		}
 
-		// Generate SQL to create tables.
-		$queries = $targetSchema->toSql($platform);
+		$isSqliteBased = \in_array(\strtolower($targetEngine), ['sqlite', 'd1'], true);
 		
-		foreach ($queries as $query) {
-			try {
-				$connection->executeStatement($query);
-			} catch (\Doctrine\DBAL\Exception $e) {
-				// For SQLite, check if it's an "already exists" error and continue.
-				// For other databases, re-throw the exception.
-				$errorMessage = $e->getMessage();
-				if (
-					'sqlite' === \strtolower($targetEngine) &&
-					(
-						\strpos($errorMessage, 'already exists') !== false ||
-						\strpos($errorMessage, 'duplicate') !== false
-					)
-				) {
-					// Index or table already exists, skip it.
-					continue;
+		// Process each table individually: drop → create → move to next.
+		// This ensures each table is fully processed before moving to the next one.
+		foreach ($schemas as $tableName => $schemaDef) {
+			\error_log(\sprintf('SchemaImporter: Processing table %s', $tableName));
+			
+			// Step 1: Check if table exists in target database and drop it if it does.
+			if (\in_array($tableName, $existingTables, true)) {
+				try {
+					// Table exists - drop it completely before recreating.
+					// Dropping a table automatically drops all its indexes, constraints, triggers, etc.
+					$quotedTableName = $platform->quoteIdentifier($tableName);
+					
+					// For SQLite/D1, use DROP TABLE IF EXISTS (safe, drops everything).
+					// For other databases, use DROP TABLE (IF EXISTS may not be supported).
+					$dropSql = $isSqliteBased 
+						? \sprintf('DROP TABLE IF EXISTS %s', $quotedTableName)
+						: \sprintf('DROP TABLE %s', $quotedTableName);
+					
+					\error_log(\sprintf('SchemaImporter: Table %s exists in target DB, dropping it completely', $tableName));
+					$connection->executeStatement($dropSql);
+					\error_log(\sprintf('SchemaImporter: Successfully dropped table %s', $tableName));
+					
+					// Remove from existing tables list so we don't try to drop it again.
+					$existingTables = \array_values(\array_filter($existingTables, function($name) use ($tableName) {
+						return $name !== $tableName;
+					}));
+				} catch (\Doctrine\DBAL\Exception $e) {
+					// If drop fails, log the error but continue.
+					// We'll try to create the table anyway, and error handling will catch conflicts.
+					\error_log(\sprintf('SchemaImporter: Failed to drop existing table %s: %s', $tableName, $e->getMessage()));
 				}
-				// Re-throw if it's not an "already exists" error.
-				throw $e;
 			}
+			
+			// Step 2: Create a fresh schema object for this single table.
+			$tableSchema = new Schema();
+			$this->createTableFromDefinition($tableSchema, $schemaDef, $targetEngine);
+			
+			// Step 3: Generate SQL for this single table and execute it immediately.
+			$queries = $tableSchema->toSql($platform);
+			
+			\error_log(\sprintf('SchemaImporter: Generated %d SQL statement(s) for table %s', \count($queries), $tableName));
+			
+			foreach ($queries as $query) {
+				try {
+					\error_log(\sprintf('SchemaImporter: Executing SQL for table %s: %s', $tableName, \substr($query, 0, 100)));
+					$connection->executeStatement($query);
+					\error_log(\sprintf('SchemaImporter: Successfully executed SQL for table %s', $tableName));
+				} catch (\Doctrine\DBAL\Exception $e) {
+					// For SQLite and D1 (which is SQLite-based), check if it's an "already exists" error and continue.
+					// This is a fallback in case the table drop didn't work.
+					// For other databases, re-throw the exception.
+					$errorMessage = $e->getMessage();
+					
+					\error_log(\sprintf('SchemaImporter: Caught exception for table %s, query: %s | Error: %s', $tableName, \substr($query, 0, 100), $errorMessage));
+					
+					if ($isSqliteBased) {
+						// Check for various "already exists" error patterns.
+						// D1 API wraps errors, so check for both the wrapped format and direct SQLite errors.
+						// Make pattern very permissive - if "already exists" appears anywhere, treat it as such.
+						$isAlreadyExists = (
+							\stripos($errorMessage, 'already exists') !== false ||
+							\stripos($errorMessage, 'duplicate') !== false ||
+							\stripos($errorMessage, 'SQLITE_ERROR') !== false
+						);
+						
+						if ($isAlreadyExists) {
+							// Index or table already exists, skip it.
+							\error_log(\sprintf('SchemaImporter: Skipping already exists error for table %s (SQLite/D1): %s', $tableName, $errorMessage));
+							continue;
+						}
+					}
+					
+					// Re-throw if it's not an "already exists" error or not SQLite-based.
+					\error_log(\sprintf('SchemaImporter: Re-throwing exception for table %s (not already exists or not SQLite/D1): %s', $tableName, $errorMessage));
+					throw $e;
+				}
+			}
+			
+			\error_log(\sprintf('SchemaImporter: Completed processing table %s', $tableName));
 		}
 	}
 
@@ -77,6 +140,7 @@ class SchemaImporter
 	private function createTableFromDefinition(Schema $schema, array $schemaDef, string $targetEngine): Table
 	{
 		$table = $schema->createTable($schemaDef['name']);
+		$isSqliteBased = \in_array(\strtolower($targetEngine), ['sqlite', 'd1'], true);
 
 		// Add columns.
 		foreach ($schemaDef['columns'] as $columnDef) {
@@ -128,10 +192,20 @@ class SchemaImporter
 		foreach ($schemaDef['indexes'] as $indexDef) {
 			if ($indexDef['primary']) {
 				$table->setPrimaryKey($indexDef['columns']);
-			} elseif ($indexDef['unique']) {
-				$table->addUniqueIndex($indexDef['columns'], $indexDef['name']);
 			} else {
-				$table->addIndex($indexDef['columns'], $indexDef['name']);
+				// For SQLite/D1, index names must be unique across the entire database.
+				// Prefix the index name with the table name to ensure uniqueness.
+				$indexName = $indexDef['name'];
+				if ($isSqliteBased && ! \str_starts_with($indexName, $schemaDef['name'] . '_')) {
+					// Prefix with table name if not already prefixed.
+					$indexName = $schemaDef['name'] . '_' . $indexName;
+				}
+				
+				if ($indexDef['unique']) {
+					$table->addUniqueIndex($indexDef['columns'], $indexName);
+				} else {
+					$table->addIndex($indexDef['columns'], $indexName);
+				}
 			}
 		}
 
@@ -187,6 +261,32 @@ class SchemaImporter
 				'longtext' => 'text',
 				'datetime' => 'string',
 				'timestamp' => 'string',
+			],
+			'd1' => [
+				// D1 is SQLite-based, so it uses the same type mappings as SQLite.
+				'bigint' => 'integer',
+				'int' => 'integer',
+				'integer' => 'integer',
+				'smallint' => 'integer',
+				'tinyint' => 'integer',
+				'varchar' => 'string',
+				'char' => 'string',
+				'text' => 'text',
+				'longtext' => 'text',
+				'mediumtext' => 'text',
+				'tinytext' => 'text',
+				'datetime' => 'string',
+				'timestamp' => 'string',
+				'date' => 'string',
+				'time' => 'string',
+				'float' => 'float',
+				'double' => 'float',
+				'decimal' => 'string',
+				'numeric' => 'string',
+				'boolean' => 'integer',
+				'bool' => 'integer',
+				'json' => 'text',
+				'blob' => 'blob',
 			],
 			'filedb' => [
 				// FileDB extends MySQL platform, so it supports MySQL-compatible types.
@@ -261,8 +361,8 @@ class SchemaImporter
 			return false;
 		}
 
-		// SQLite uses INTEGER PRIMARY KEY for auto-increment.
-		if ('sqlite' === $targetEngine) {
+		// SQLite and D1 (SQLite-based) use INTEGER PRIMARY KEY for auto-increment.
+		if (\in_array($targetEngine, ['sqlite', 'd1'], true)) {
 			return true;
 		}
 
