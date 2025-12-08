@@ -217,6 +217,13 @@ class QueryConverter
 			}
 		}
 
+		// Handle INSERT ... SELECT syntax - pass through the original query.
+		// Action Scheduler uses this pattern: INSERT INTO ... SELECT ... FROM DUAL WHERE ...
+		if (isset($stmt->select)) {
+			// Build the query from the statement.
+			return $stmt->build();
+		}
+
 		// Get values - use raw to preserve quotes.
 		$allValues = [];
 		if (! empty($stmt->values)) {
@@ -447,7 +454,9 @@ class QueryConverter
 
 		// Handle alias.
 		if (! empty($expr->alias)) {
-			$result .= ' AS ' . $expr->alias;
+			// Quote the alias in case it's a reserved keyword (e.g., 'group').
+			$platform = $this->connection->getDatabasePlatform();
+			$result .= ' AS ' . $platform->quoteIdentifier($expr->alias);
 		}
 
 		return $result;

@@ -26,10 +26,18 @@ if (! \defined('ABSPATH')) {
 }
 
 // Plugin constants.
-\define('WP_DBAL_VERSION', '0.1.0');
-\define('WP_DBAL_PLUGIN_DIR', \plugin_dir_path(__FILE__));
-\define('WP_DBAL_PLUGIN_URL', \plugin_dir_url(__FILE__));
-\define('WP_DBAL_PLUGIN_FILE', __FILE__);
+if (! \defined('WP_DBAL_VERSION')) {
+	\define('WP_DBAL_VERSION', '0.1.0');
+}
+if (! \defined('WP_DBAL_PLUGIN_DIR')) {
+	\define('WP_DBAL_PLUGIN_DIR', \plugin_dir_path(__FILE__));
+}
+if (! \defined('WP_DBAL_PLUGIN_URL')) {
+	\define('WP_DBAL_PLUGIN_URL', \plugin_dir_url(__FILE__));
+}
+if (! \defined('WP_DBAL_PLUGIN_FILE')) {
+	\define('WP_DBAL_PLUGIN_FILE', __FILE__);
+}
 
 // Load Composer autoloader.
 if (\file_exists(WP_DBAL_PLUGIN_DIR . 'vendor/autoload.php')) {
@@ -81,6 +89,8 @@ final class Plugin
 
 		\add_action('admin_menu', [ $this, 'addAdminMenu' ]);
 		\add_action('admin_notices', [ $this, 'adminNotices' ]);
+		\add_action('rest_api_init', [ $this, 'registerRestAPI' ]);
+		\add_action('admin_enqueue_scripts', [ $this, 'enqueueScripts' ]);
 	}
 
 	/**
@@ -219,98 +229,96 @@ final class Plugin
 	}
 
 	/**
+	 * Register REST API routes.
+	 *
+	 * @return void
+	 */
+	public function registerRestAPI(): void
+	{
+		// Migration REST API.
+		$migrationRestAPI = new \WP_DBAL\Migration\RestAPI();
+		$migrationRestAPI->registerRoutes();
+
+		// Admin REST API.
+		$adminController = new \WP_DBAL\REST\AdminController();
+		$adminController->registerRoutes();
+	}
+
+	/**
+	 * Enqueue admin scripts and styles.
+	 *
+	 * @param string $hook Current admin page hook.
+	 * @return void
+	 */
+	public function enqueueScripts(string $hook): void
+	{
+		// Only enqueue on our admin page.
+		if ('tools_page_wp-dbal' !== $hook) {
+			return;
+		}
+
+		// Enqueue admin React app.
+		$asset_file = WP_DBAL_PLUGIN_DIR . 'build/admin.asset.php';
+		if (\file_exists($asset_file)) {
+			$asset = require $asset_file;
+			\wp_enqueue_script(
+				'wp-dbal-admin',
+				WP_DBAL_PLUGIN_URL . 'build/admin.js',
+				$asset['dependencies'],
+				$asset['version'],
+				true
+			);
+		} else {
+			// Fallback if asset file doesn't exist yet.
+			\wp_enqueue_script(
+				'wp-dbal-admin',
+				WP_DBAL_PLUGIN_URL . 'build/admin.js',
+				[ 'wp-element', 'wp-i18n', 'wp-components', 'wp-api-fetch' ],
+				WP_DBAL_VERSION,
+				true
+			);
+		}
+
+		// Enqueue admin styles.
+		\wp_enqueue_style(
+			'wp-dbal-admin',
+			WP_DBAL_PLUGIN_URL . 'assets/css/migration.css',
+			[],
+			WP_DBAL_VERSION
+		);
+
+		// Set up API fetch nonce via localization.
+		\wp_localize_script(
+			'wp-dbal-admin',
+			'wpDbalAdmin',
+			[
+				'restNonce' => \wp_create_nonce('wp_rest'),
+			]
+		);
+	}
+
+	/**
 	 * Render admin page.
 	 *
 	 * @return void
 	 */
 	public function renderAdminPage(): void
 	{
-		// Handle actions.
-		if (isset($_POST['wp_dbal_action']) && \check_admin_referer('wp_dbal_admin')) {
-			$action = \sanitize_text_field(\wp_unslash($_POST['wp_dbal_action']));
-			if ('install_dropin' === $action) {
-				$this->installDropin();
-			} elseif ('remove_dropin' === $action) {
-				$this->removeDropin();
-			}
-		}
-
-		$dropinInstalled = $this->isDropinInstalled();
-		$dbEngine        = \defined('DB_ENGINE') ? DB_ENGINE : 'mysql';
-
 		// phpcs:disable Generic.Files.InlineHTML.Found -- Admin page template
 		?>
-		<div class="wrap">
-			<h1><?php \esc_html_e('WP-DBAL Settings', 'wp-dbal'); ?></h1>
-
-			<div class="card">
-				<h2><?php \esc_html_e('Status', 'wp-dbal'); ?></h2>
-				<table class="form-table">
-					<tr>
-						<th><?php \esc_html_e('Drop-in Status', 'wp-dbal'); ?></th>
-						<td>
-							<?php if ($dropinInstalled) : ?>
-								<span style="color: green;">&#10003; <?php \esc_html_e('Installed', 'wp-dbal'); ?></span>
-							<?php else : ?>
-								<span style="color: red;">&#10007; <?php \esc_html_e('Not Installed', 'wp-dbal'); ?></span>
-							<?php endif; ?>
-						</td>
-					</tr>
-					<tr>
-						<th><?php \esc_html_e('Database Engine', 'wp-dbal'); ?></th>
-						<td><code><?php echo \esc_html($dbEngine); ?></code></td>
-					</tr>
-					<tr>
-						<th><?php \esc_html_e('DBAL Version', 'wp-dbal'); ?></th>
-						<td>
-							<?php
-							if (\class_exists('\Doctrine\DBAL\Connection')) {
-								echo '<code>' . \esc_html(\Doctrine\DBAL\Connection::class) . '</code>';
-							} else {
-								\esc_html_e('Not loaded (run composer install)', 'wp-dbal');
-							}
-							?>
-						</td>
-					</tr>
-				</table>
-
-				<form method="post">
-					<?php \wp_nonce_field('wp_dbal_admin'); ?>
-					<?php if ($dropinInstalled) : ?>
-						<input type="hidden" name="wp_dbal_action" value="remove_dropin">
-						<button type="submit" class="button button-secondary">
-							<?php \esc_html_e('Remove Drop-in', 'wp-dbal'); ?>
-						</button>
-					<?php else : ?>
-						<input type="hidden" name="wp_dbal_action" value="install_dropin">
-						<button type="submit" class="button button-primary">
-							<?php \esc_html_e('Install Drop-in', 'wp-dbal'); ?>
-						</button>
-					<?php endif; ?>
-				</form>
-			</div>
-
-			<div class="card" style="margin-top: 20px;">
-				<h2><?php \esc_html_e('Configuration', 'wp-dbal'); ?></h2>
-				<p><?php \esc_html_e('Add the following constants to wp-config.php to configure the database engine:', 'wp-dbal'); ?></p>
-				<pre style="background: #f0f0f0; padding: 15px; overflow-x: auto;">
-// Database engine: mysql, pgsql, sqlite
-define( 'DB_ENGINE', 'mysql' );
-
-// For non-MySQL engines, configure DBAL options:
-// define( 'DB_DBAL_OPTIONS', [
-//     'driver' => 'pdo_pgsql',
-//     'host' => 'localhost',
-//     'port' => 5432,
-//     'dbname' => 'wordpress',
-//     'user' => 'root',
-//     'password' => '',
-// ] );
-				</pre>
-			</div>
-		</div>
+		<div id="wp-dbal-admin-root"></div>
 		<?php
 		// phpcs:enable Generic.Files.InlineHTML.Found
+	}
+
+	/**
+	 * Get current database engine.
+	 *
+	 * @return string
+	 */
+	public function getDbEngine(): string
+	{
+		return \defined('DB_ENGINE') ? \strtolower(DB_ENGINE) : 'mysql';
 	}
 }
 

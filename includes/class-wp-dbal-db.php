@@ -186,6 +186,23 @@ class WP_DBAL_DB extends \wpdb
 
 		// Build connection params based on engine.
 		switch ($this->dbEngine) {
+			case 'filedb':
+				// File-based database storage.
+				$storagePath = \defined('DB_FILEDB_PATH') ? DB_FILEDB_PATH : null;
+				if (null === $storagePath) {
+					if (\defined('WP_CONTENT_DIR')) {
+						$storagePath = WP_CONTENT_DIR . '/file-db';
+					} else {
+						$storagePath = ABSPATH . 'wp-content/file-db';
+					}
+				}
+
+				return [
+					'driverClass' => \WP_DBAL\FileDB\Driver::class,
+					'path'        => $storagePath,
+					'format'      => \defined('DB_FILEDB_FORMAT') ? DB_FILEDB_FORMAT : 'json',
+				];
+
 			case 'sqlite':
 				if (\defined('DB_SQLITE_PATH')) {
 					$dbPath = DB_SQLITE_PATH;
@@ -205,6 +222,15 @@ class WP_DBAL_DB extends \wpdb
 				return [
 					'driver' => 'pdo_sqlite',
 					'path'   => $dbPath,
+				];
+
+			case 'd1':
+				// Cloudflare D1 database via REST API.
+				return [
+					'driverClass' => \WP_DBAL\D1\Driver::class,
+					'account_id'  => \defined('DB_D1_ACCOUNT_ID') ? DB_D1_ACCOUNT_ID : '',
+					'database_id' => \defined('DB_D1_DATABASE_ID') ? DB_D1_DATABASE_ID : '',
+					'api_token'   => \defined('DB_D1_API_TOKEN') ? DB_D1_API_TOKEN : '',
 				];
 
 			case 'pgsql':
@@ -453,19 +479,25 @@ class WP_DBAL_DB extends \wpdb
 			return null;
 		}
 
-		// Return a version string based on the engine.
+		// Return a MySQL-compatible version string for all engines.
+		// WordPress checks for MySQL 5.5.5+ during installation, so we need
+		// to return a compatible version even for non-MySQL backends.
 		// DBAL 4.x doesn't have getName() on platform.
 		switch ($this->dbEngine) {
+			case 'filedb':
+				// Return MySQL 8.0 compatible version for WordPress compatibility.
+				return '8.0.0-FileDB';
+
 			case 'sqlite':
-				return '3.0'; // SQLite version placeholder.
+				return '8.0.0-SQLite';
 
 			case 'pgsql':
 			case 'postgresql':
-				return '12.0'; // PostgreSQL version placeholder.
+				return '8.0.0-PostgreSQL';
 
 			case 'mysql':
 			default:
-				return '8.0'; // MySQL version placeholder.
+				return '8.0';
 		}
 	}
 
@@ -509,6 +541,13 @@ class WP_DBAL_DB extends \wpdb
 			case 'sqlite':
 				// SQLite has limited capability support.
 				if (\in_array($capability, [ 'found_rows', 'utf8mb4' ], true)) {
+					return false;
+				}
+				return true;
+
+			case 'filedb':
+				// FileDB has limited capability support.
+				if (\in_array($capability, [ 'found_rows' ], true)) {
 					return false;
 				}
 				return true;
@@ -769,6 +808,8 @@ class WP_DBAL_DB extends \wpdb
 	protected function getDefaultServerInfo(): string
 	{
 		switch ($this->dbEngine) {
+			case 'filedb':
+				return 'FileDB 1.0.0';
 			case 'sqlite':
 				return 'SQLite 3.0';
 			case 'pgsql':

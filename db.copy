@@ -32,5 +32,5 @@ if (! \is_dir($wpDbalPluginDir)) {
 // Load the DBAL implementation.
 $wpDbalLoader = $wpDbalPluginDir . 'includes/load.php';
 if (\file_exists($wpDbalLoader)) {
-	\require_once $wpDbalLoader;
+	require_once $wpDbalLoader;
 }

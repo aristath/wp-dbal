@@ -23,3 +23,5 @@ composer.lock
 .phpunit.cache/
 
 .php-cs-fixer.cache
+
+.claude/settings.local.json

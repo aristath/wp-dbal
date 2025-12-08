@@ -1,0 +1,33 @@
+{
+  "name": "wp-dbal",
+  "version": "0.1.0",
+  "description": "Database abstraction layer for WordPress using Doctrine DBAL",
+  "main": "index.js",
+  "scripts": {
+    "build": "MINIFY=true wp-scripts build",
+    "build:dev": "MINIFY=false wp-scripts build",
+    "start": "wp-scripts start",
+    "lint:js": "wp-scripts lint-js 'src/**/*.js'",
+    "lint:js:fix": "wp-scripts lint-js 'src/**/*.js' --fix"
+  },
+  "keywords": [
+    "wordpress",
+    "database",
+    "dbal",
+    "migration"
+  ],
+  "author": "Ari Stathopoulos",
+  "license": "GPL-2.0-or-later",
+  "dependencies": {
+    "@wordpress/api-fetch": "^6.0.0",
+    "@wordpress/components": "^25.0.0",
+    "@wordpress/element": "^6.0.0",
+    "@wordpress/i18n": "^5.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@wordpress/scripts": "^28.0.0"
+  }
+}
+

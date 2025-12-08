@@ -1,0 +1,43 @@
+/**
+ * Migration UI Styles
+ *
+ * @package WP_DBAL
+ */
+
+.wp-dbal-database-selector {
+	margin: 20px 0;
+}
+
+.wp-dbal-database-selector .components-base-control {
+	margin-bottom: 15px;
+}
+
+.wp-dbal-connection-validator {
+	margin: 20px 0;
+}
+
+.wp-dbal-connection-validator .components-spinner {
+	margin-right: 10px;
+}
+
+.wp-dbal-migration-progress {
+	margin: 20px 0;
+}
+
+.wp-dbal-migration-progress h3 {
+	margin-top: 0;
+}
+
+.wp-dbal-migration-progress .components-progress-bar {
+	margin: 15px 0;
+}
+
+.wp-dbal-migration-controls {
+	margin: 20px 0;
+}
+
+.wp-dbal-migration-controls .components-button-group {
+	display: flex;
+	gap: 10px;
+}
+
