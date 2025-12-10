@@ -1084,4 +1084,295 @@ class WP_DBAL_DB extends \wpdb
 
 		return $charset_collate;
 	}
+
+	/**
+	 * Prepares a SQL query for safe execution.
+	 *
+	 * Uses sprintf()-like syntax. Accepts a format string and a variable number
+	 * of arguments. The format specifiers supported are:
+	 * - %d (integer)
+	 * - %f (float)
+	 * - %s (string)
+	 * - %i (identifier, e.g. table/field names)
+	 *
+	 * @param string      $query   Query statement with sprintf()-like placeholders.
+	 * @param mixed       ...$args Arguments to substitute into the query.
+	 * @return string|void Sanitized query string, or void if no arguments.
+	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
+	public function prepare($query, ...$args)
+	{
+		if (empty($args)) {
+			// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- This matches wpdb behavior
+			\_doing_it_wrong(
+				'wpdb::prepare',
+				'wpdb::prepare() requires at least two arguments.',
+				'6.2.0'
+			);
+			return;
+		}
+
+		// Handle array argument (for backwards compatibility).
+		if (\is_array($args[0]) && 1 === \count($args)) {
+			$args = $args[0];
+		}
+
+		$argIndex = 0;
+
+		// Replace format placeholders with escaped values.
+		$query = \preg_replace_callback(
+			'/%([%dfsi])/',
+			function ($matches) use (&$args, &$argIndex) {
+				$type = $matches[1];
+
+				// %% is a literal %.
+				if ('%' === $type) {
+					return '%';
+				}
+
+				if (! isset($args[ $argIndex ])) {
+					return $matches[0];
+				}
+
+				$value = $args[ $argIndex ];
+				$argIndex++;
+
+				switch ($type) {
+					case 'd':
+						return (int) $value;
+
+					case 'f':
+						return (float) $value;
+
+					case 's':
+						return "'" . $this->_real_escape((string) $value) . "'";
+
+					case 'i':
+						// Identifier (table/column name) - backtick escape.
+						$identifier = \str_replace('`', '``', (string) $value);
+						return "`{$identifier}`";
+
+					default:
+						return $matches[0];
+				}
+			},
+			$query
+		);
+
+		return $query;
+	}
+
+	/**
+	 * Insert a row into a table.
+	 *
+	 * @param string                      $table  The table name.
+	 * @param array<string, mixed>        $data   Data to insert (column => value pairs).
+	 * @param array<string>|string|null   $format Optional. An array of formats to be mapped to each value in $data.
+	 * @return int|false The number of rows inserted, or false on error.
+	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
+	public function insert($table, $data, $format = null)
+	{
+		return $this->_insert_replace_helper($table, $data, $format, 'INSERT');
+	}
+
+	/**
+	 * Replace a row in a table.
+	 *
+	 * @param string                      $table  The table name.
+	 * @param array<string, mixed>        $data   Data to insert (column => value pairs).
+	 * @param array<string>|string|null   $format Optional. An array of formats to be mapped to each value in $data.
+	 * @return int|false The number of rows affected, or false on error.
+	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
+	public function replace($table, $data, $format = null)
+	{
+		return $this->_insert_replace_helper($table, $data, $format, 'REPLACE');
+	}
+
+	/**
+	 * Helper function for insert and replace.
+	 *
+	 * @param string                      $table  The table name.
+	 * @param array<string, mixed>        $data   Data to insert (column => value pairs).
+	 * @param array<string>|string|null   $format Optional. An array of formats.
+	 * @param string                      $type   Type of operation (INSERT or REPLACE).
+	 * @return int|false The number of rows inserted, or false on error.
+	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps, PSR2.Methods.MethodDeclaration.Underscore, Squiz.NamingConventions.ValidFunctionName.PublicUnderscore -- wpdb helper
+	protected function _insert_replace_helper($table, $data, $format, $type)
+	{
+		if (empty($data)) {
+			return false;
+		}
+
+		$columns = [];
+		$values  = [];
+		$formats = $this->normalizeFormats($format, \count($data));
+
+		$i = 0;
+		foreach ($data as $column => $value) {
+			$columns[] = "`" . \str_replace('`', '``', $column) . "`";
+			$values[]  = $this->formatValue($value, $formats[ $i ] ?? '%s');
+			$i++;
+		}
+
+		$sql = \sprintf(
+			'%s INTO `%s` (%s) VALUES (%s)',
+			$type,
+			\str_replace('`', '``', $table),
+			\implode(', ', $columns),
+			\implode(', ', $values)
+		);
+
+		$result = $this->query($sql);
+
+		if (false === $result) {
+			return false;
+		}
+
+		return $this->rows_affected;
+	}
+
+	/**
+	 * Update a row in the table.
+	 *
+	 * @param string                      $table        The table name.
+	 * @param array<string, mixed>        $data         Data to update (column => value pairs).
+	 * @param array<string, mixed>        $where        WHERE clause (column => value pairs).
+	 * @param array<string>|string|null   $format       Optional. An array of formats for $data values.
+	 * @param array<string>|string|null   $where_format Optional. An array of formats for $where values.
+	 * @return int|false The number of rows updated, or false on error.
+	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
+	public function update($table, $data, $where, $format = null, $where_format = null)
+	{
+		if (empty($data) || empty($where)) {
+			return false;
+		}
+
+		$setClauses   = [];
+		$whereClauses = [];
+
+		$formats      = $this->normalizeFormats($format, \count($data));
+		$whereFormats = $this->normalizeFormats($where_format, \count($where));
+
+		$i = 0;
+		foreach ($data as $column => $value) {
+			$quotedColumn = "`" . \str_replace('`', '``', $column) . "`";
+			$formattedValue = $this->formatValue($value, $formats[ $i ] ?? '%s');
+			$setClauses[] = "{$quotedColumn} = {$formattedValue}";
+			$i++;
+		}
+
+		$i = 0;
+		foreach ($where as $column => $value) {
+			$quotedColumn = "`" . \str_replace('`', '``', $column) . "`";
+			$formattedValue = $this->formatValue($value, $whereFormats[ $i ] ?? '%s');
+			$whereClauses[] = "{$quotedColumn} = {$formattedValue}";
+			$i++;
+		}
+
+		$sql = \sprintf(
+			'UPDATE `%s` SET %s WHERE %s',
+			\str_replace('`', '``', $table),
+			\implode(', ', $setClauses),
+			\implode(' AND ', $whereClauses)
+		);
+
+		$result = $this->query($sql);
+
+		if (false === $result) {
+			return false;
+		}
+
+		return $this->rows_affected;
+	}
+
+	/**
+	 * Delete a row from the table.
+	 *
+	 * @param string                      $table        The table name.
+	 * @param array<string, mixed>        $where        WHERE clause (column => value pairs).
+	 * @param array<string>|string|null   $where_format Optional. An array of formats for $where values.
+	 * @return int|false The number of rows deleted, or false on error.
+	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
+	public function delete($table, $where, $where_format = null)
+	{
+		if (empty($where)) {
+			return false;
+		}
+
+		$whereClauses = [];
+		$whereFormats = $this->normalizeFormats($where_format, \count($where));
+
+		$i = 0;
+		foreach ($where as $column => $value) {
+			$quotedColumn = "`" . \str_replace('`', '``', $column) . "`";
+			$formattedValue = $this->formatValue($value, $whereFormats[ $i ] ?? '%s');
+			$whereClauses[] = "{$quotedColumn} = {$formattedValue}";
+			$i++;
+		}
+
+		$sql = \sprintf(
+			'DELETE FROM `%s` WHERE %s',
+			\str_replace('`', '``', $table),
+			\implode(' AND ', $whereClauses)
+		);
+
+		$result = $this->query($sql);
+
+		if (false === $result) {
+			return false;
+		}
+
+		return $this->rows_affected;
+	}
+
+	/**
+	 * Normalize format specification to array.
+	 *
+	 * @param array<string>|string|null $format The format specification.
+	 * @param int                        $count  Expected number of format items.
+	 * @return array<string> Normalized array of format strings.
+	 */
+	protected function normalizeFormats($format, int $count): array
+	{
+		if (null === $format) {
+			return \array_fill(0, $count, '%s');
+		}
+
+		if (\is_string($format)) {
+			return \array_fill(0, $count, $format);
+		}
+
+		return $format;
+	}
+
+	/**
+	 * Format a value according to its format specifier.
+	 *
+	 * @param mixed  $value  The value to format.
+	 * @param string $format The format specifier (%d, %f, %s).
+	 * @return string The formatted value for SQL.
+	 */
+	protected function formatValue($value, string $format): string
+	{
+		if (null === $value) {
+			return 'NULL';
+		}
+
+		switch ($format) {
+			case '%d':
+				return (string) (int) $value;
+
+			case '%f':
+				return (string) (float) $value;
+
+			case '%s':
+			default:
+				return "'" . $this->_real_escape((string) $value) . "'";
+		}
+	}
 }
