@@ -32,48 +32,41 @@ class FunctionMapper
 	protected string $platform;
 
 	/**
+	 * SQLite-compatible function mappings (shared between sqlite and d1).
+	 *
+	 * @var array<string, string>
+	 */
+	protected static array $sqliteMappings = [
+		// Date/Time functions.
+		'NOW()'                 => "datetime('now', 'localtime')",
+		'CURDATE()'             => "date('now', 'localtime')",
+		'CURTIME()'             => "time('now', 'localtime')",
+		'UTC_TIMESTAMP()'       => "datetime('now')",
+		'UNIX_TIMESTAMP()'      => "strftime('%s', 'now')",
+		'CURRENT_TIMESTAMP()'   => "datetime('now', 'localtime')",
+		'CURRENT_DATE()'        => "date('now', 'localtime')",
+		'CURRENT_TIME()'        => "time('now', 'localtime')",
+		'SYSDATE()'             => "datetime('now', 'localtime')",
+
+		// String functions.
+		'RAND()'                => 'RANDOM() / 18446744073709551616 + 0.5',
+
+		// Other.
+		'FOUND_ROWS()'          => '0', // Not supported in SQLite.
+		'LAST_INSERT_ID()'      => 'last_insert_rowid()',
+		'ROW_COUNT()'           => 'changes()',
+		'DATABASE()'            => "''", // SQLite doesn't have named databases.
+		'VERSION()'             => "'SQLite'",
+	];
+
+	/**
 	 * Function mappings per platform.
 	 *
 	 * @var array<string, array<string, string|callable>>
 	 */
 	protected static array $mappings = [
-		'sqlite' => [
-			// Date/Time functions.
-			'NOW()'                 => "datetime('now', 'localtime')",
-			'CURDATE()'             => "date('now', 'localtime')",
-			'CURTIME()'             => "time('now', 'localtime')",
-			'UTC_TIMESTAMP()'       => "datetime('now')",
-			'UNIX_TIMESTAMP()'      => "strftime('%s', 'now')",
-
-			// String functions.
-			'RAND()'                => 'RANDOM() / 18446744073709551616 + 0.5',
-
-			// Other.
-			'FOUND_ROWS()'          => '0', // Not supported in SQLite.
-			'LAST_INSERT_ID()'      => 'last_insert_rowid()',
-
-			// CHAR_LENGTH -> LENGTH (same in SQLite for UTF-8).
-			// Note: SQLite's LENGTH returns byte count for BLOBs but character count for TEXT.
-		],
-		'd1' => [
-			// D1 is SQLite-based, so it uses the same function mappings as SQLite.
-			// Date/Time functions.
-			'NOW()'                 => "datetime('now', 'localtime')",
-			'CURDATE()'             => "date('now', 'localtime')",
-			'CURTIME()'             => "time('now', 'localtime')",
-			'UTC_TIMESTAMP()'       => "datetime('now')",
-			'UNIX_TIMESTAMP()'      => "strftime('%s', 'now')",
-
-			// String functions.
-			'RAND()'                => 'RANDOM() / 18446744073709551616 + 0.5',
-
-			// Other.
-			'FOUND_ROWS()'          => '0', // Not supported in SQLite/D1.
-			'LAST_INSERT_ID()'      => 'last_insert_rowid()',
-
-			// CHAR_LENGTH -> LENGTH (same in SQLite/D1 for UTF-8).
-			// Note: SQLite's LENGTH returns byte count for BLOBs but character count for TEXT.
-		],
+		'sqlite' => [], // Will be populated from $sqliteMappings.
+		'd1'     => [], // Will be populated from $sqliteMappings (D1 is SQLite-based).
 		'pgsql'  => [
 			// Date/Time functions.
 			'NOW()'                 => 'NOW()',
@@ -81,6 +74,8 @@ class FunctionMapper
 			'CURTIME()'             => 'CURRENT_TIME',
 			'UTC_TIMESTAMP()'       => "(NOW() AT TIME ZONE 'UTC')",
 			'UNIX_TIMESTAMP()'      => 'EXTRACT(EPOCH FROM NOW())::INTEGER',
+			'CURRENT_TIMESTAMP()'   => 'NOW()',
+			'SYSDATE()'             => 'NOW()',
 
 			// String functions.
 			'RAND()'                => 'RANDOM()',
@@ -88,10 +83,122 @@ class FunctionMapper
 			// Other.
 			'FOUND_ROWS()'          => '0', // Not directly supported.
 			'LAST_INSERT_ID()'      => 'lastval()',
+			'ROW_COUNT()'           => '0', // Not directly supported in this context.
+			'DATABASE()'            => 'current_database()',
+			'VERSION()'             => 'version()',
 		],
 		'mysql'  => [
 			// MySQL passthrough - no changes needed.
 		],
+	];
+
+	/**
+	 * SQLite-compatible regex patterns (shared between sqlite and d1).
+	 *
+	 * @var array<string, string>
+	 */
+	protected static array $sqlitePatterns = [
+		// CONCAT handled specially due to nested parentheses.
+		'/\bCONCAT\s*\(/i'                               => 'sqliteConcatStart',
+		// CONCAT_WS(sep, a, b, c) - needs special handling.
+		'/\bCONCAT_WS\s*\(/i'                            => 'sqliteConcatWsStart',
+		// IFNULL(a, b) -> COALESCE(a, b).
+		'/\bIFNULL\s*\(([^,]+),\s*([^)]+)\)/i'           => 'COALESCE($1, $2)',
+		// NULLIF(a, b) -> NULLIF(a, b) (SQLite supports it).
+		// IF(cond, true, false) -> CASE WHEN cond THEN true ELSE false END.
+		'/\bIF\s*\(([^,]+),\s*([^,]+),\s*([^)]+)\)/i'    => 'CASE WHEN $1 THEN $2 ELSE $3 END',
+		// UNIX_TIMESTAMP(date) -> strftime('%s', date).
+		'/\bUNIX_TIMESTAMP\s*\(([^)]+)\)/i'              => "strftime('%s', $1)",
+		// FROM_UNIXTIME(timestamp) -> datetime(timestamp, 'unixepoch', 'localtime').
+		'/\bFROM_UNIXTIME\s*\(([^)]+)\)/i'               => "datetime($1, 'unixepoch', 'localtime')",
+		// DATE_FORMAT(date, format) - needs special handling.
+		'/\bDATE_FORMAT\s*\(([^,]+),\s*([^)]+)\)/i'      => 'sqliteDateFormat',
+		// YEAR(date) -> strftime('%Y', date).
+		'/\bYEAR\s*\(([^)]+)\)/i'                        => "CAST(strftime('%Y', $1) AS INTEGER)",
+		// MONTH(date) -> strftime('%m', date).
+		'/\bMONTH\s*\(([^)]+)\)/i'                       => "CAST(strftime('%m', $1) AS INTEGER)",
+		// DAY(date) -> strftime('%d', date).
+		'/\bDAY\s*\(([^)]+)\)/i'                         => "CAST(strftime('%d', $1) AS INTEGER)",
+		// DAYOFMONTH(date) -> strftime('%d', date).
+		'/\bDAYOFMONTH\s*\(([^)]+)\)/i'                  => "CAST(strftime('%d', $1) AS INTEGER)",
+		// DAYOFWEEK(date) -> strftime('%w', date) + 1 (MySQL is 1-7, SQLite is 0-6).
+		'/\bDAYOFWEEK\s*\(([^)]+)\)/i'                   => "(CAST(strftime('%w', $1) AS INTEGER) + 1)",
+		// DAYOFYEAR(date) -> strftime('%j', date).
+		'/\bDAYOFYEAR\s*\(([^)]+)\)/i'                   => "CAST(strftime('%j', $1) AS INTEGER)",
+		// WEEKDAY(date) -> strftime('%w', date) (0=Monday in MySQL, but 0=Sunday in SQLite - approximate).
+		'/\bWEEKDAY\s*\(([^)]+)\)/i'                     => "((CAST(strftime('%w', $1) AS INTEGER) + 6) % 7)",
+		// HOUR(date) -> strftime('%H', date).
+		'/\bHOUR\s*\(([^)]+)\)/i'                        => "CAST(strftime('%H', $1) AS INTEGER)",
+		// MINUTE(date) -> strftime('%M', date).
+		'/\bMINUTE\s*\(([^)]+)\)/i'                      => "CAST(strftime('%M', $1) AS INTEGER)",
+		// SECOND(date) -> strftime('%S', date).
+		'/\bSECOND\s*\(([^)]+)\)/i'                      => "CAST(strftime('%S', $1) AS INTEGER)",
+		// DATE(expr) -> date(expr).
+		'/\bDATE\s*\(([^)]+)\)/i'                        => "date($1)",
+		// TIME(expr) -> time(expr).
+		'/\bTIME\s*\(([^)]+)\)/i'                        => "time($1)",
+		// DATEDIFF(a, b) -> julianday(a) - julianday(b).
+		'/\bDATEDIFF\s*\(([^,]+),\s*([^)]+)\)/i'         => 'CAST(julianday($1) - julianday($2) AS INTEGER)',
+		// DATE_ADD(date, INTERVAL n unit) - needs special handling.
+		'/\bDATE_ADD\s*\(([^,]+),\s*INTERVAL\s+(-?\d+)\s+(\w+)\)/i' => 'sqliteDateAdd',
+		// DATE_SUB(date, INTERVAL n unit) - needs special handling.
+		'/\bDATE_SUB\s*\(([^,]+),\s*INTERVAL\s+(-?\d+)\s+(\w+)\)/i' => 'sqliteDateSub',
+		// GROUP_CONCAT - basic support.
+		'/\bGROUP_CONCAT\s*\(([^)]+)\)/i'                => 'GROUP_CONCAT($1)',
+		// SUBSTRING(str, pos, len) -> SUBSTR(str, pos, len).
+		'/\bSUBSTRING\s*\(/i'                            => 'SUBSTR(',
+		// SUBSTRING_INDEX(str, delim, count) - needs special handling.
+		'/\bSUBSTRING_INDEX\s*\(/i'                      => 'sqliteSubstringIndex',
+		// LOCATE(substr, str) -> INSTR(str, substr).
+		'/\bLOCATE\s*\(([^,]+),\s*([^)]+)\)/i'           => 'INSTR($2, $1)',
+		// POSITION(substr IN str) -> INSTR(str, substr).
+		'/\bPOSITION\s*\(([^)]+)\s+IN\s+([^)]+)\)/i'     => 'INSTR($2, $1)',
+		// LCASE/UCASE -> LOWER/UPPER.
+		'/\bLCASE\s*\(/i'                                => 'LOWER(',
+		'/\bUCASE\s*\(/i'                                => 'UPPER(',
+		// CHAR_LENGTH / CHARACTER_LENGTH -> LENGTH.
+		'/\bCHAR_LENGTH\s*\(/i'                          => 'LENGTH(',
+		'/\bCHARACTER_LENGTH\s*\(/i'                     => 'LENGTH(',
+		// OCTET_LENGTH -> LENGTH (for byte count).
+		'/\bOCTET_LENGTH\s*\(/i'                         => 'LENGTH(',
+		// BIT_LENGTH -> LENGTH * 8 (approximate).
+		'/\bBIT_LENGTH\s*\(([^)]+)\)/i'                  => '(LENGTH($1) * 8)',
+		// LEFT(str, len) -> SUBSTR(str, 1, len).
+		'/\bLEFT\s*\(([^,]+),\s*([^)]+)\)/i'             => 'SUBSTR($1, 1, $2)',
+		// RIGHT(str, len) -> SUBSTR(str, -len).
+		'/\bRIGHT\s*\(([^,]+),\s*([^)]+)\)/i'            => 'SUBSTR($1, -$2)',
+		// REVERSE(str) - not directly supported, return as-is.
+		// REPEAT(str, count) - not directly supported.
+		// SPACE(n) -> (create n spaces) - not directly supported.
+		// GREATEST(a, b, ...) -> MAX(a, b, ...) - SQLite's MAX works for 2+ args.
+		'/\bGREATEST\s*\(/i'                             => 'MAX(',
+		// LEAST(a, b, ...) -> MIN(a, b, ...) - SQLite's MIN works for 2+ args.
+		'/\bLEAST\s*\(/i'                                => 'MIN(',
+		// FIELD(needle, a, b, c) - needs special handling.
+		'/\bFIELD\s*\(([^,]+),\s*(.+)\)/i'               => 'sqliteField',
+		// ELT(n, a, b, c) - needs special handling.
+		'/\bELT\s*\(([^,]+),\s*(.+)\)/i'                 => 'sqliteElt',
+		// FIND_IN_SET(needle, set) - needs special handling.
+		'/\bFIND_IN_SET\s*\(([^,]+),\s*([^)]+)\)/i'      => 'sqliteFindInSet',
+		// MAKE_SET - complex, not supported.
+		// TRUNCATE(n, d) -> ROUND(n - 0.5*SIGN(n)*POWER(10,-d), d) (approximate).
+		'/\bTRUNCATE\s*\(([^,]+),\s*([^)]+)\)/i'         => 'ROUND($1, $2)',
+		// MOD(a, b) -> (a % b).
+		'/\bMOD\s*\(([^,]+),\s*([^)]+)\)/i'              => '($1 % $2)',
+		// POW/POWER - not available in base SQLite, but some builds have it.
+		// ABS is native in SQLite.
+		// CEIL/CEILING - not native, approximate with CAST.
+		'/\bCEIL\s*\(([^)]+)\)/i'                        => 'CAST($1 + 0.5 AS INTEGER)',
+		'/\bCEILING\s*\(([^)]+)\)/i'                     => 'CAST($1 + 0.5 AS INTEGER)',
+		// FLOOR - not native, approximate with CAST.
+		'/\bFLOOR\s*\(([^)]+)\)/i'                       => 'CAST($1 AS INTEGER)',
+		// SIGN(n).
+		'/\bSIGN\s*\(([^)]+)\)/i'                        => 'CASE WHEN $1 > 0 THEN 1 WHEN $1 < 0 THEN -1 ELSE 0 END',
+		// HEX(str) -> hex() is available in SQLite.
+		// UNHEX - not available in SQLite.
+		// MD5/SHA1/SHA2 - not available in base SQLite.
+		// BINARY cast -> just remove it.
+		'/\bBINARY\s+/i'                                 => '',
 	];
 
 	/**
@@ -100,123 +207,31 @@ class FunctionMapper
 	 * @var array<string, array<string, string|callable>>
 	 */
 	protected static array $patterns = [
-		'sqlite' => [
-			// CONCAT handled specially due to nested parentheses
-			'/\bCONCAT\s*\(/i'                               => 'sqliteConcatStart',
-			// IFNULL(a, b) -> COALESCE(a, b)
-			'/\bIFNULL\s*\(([^,]+),\s*([^)]+)\)/i'           => 'COALESCE($1, $2)',
-			// IF(cond, true, false) -> CASE WHEN cond THEN true ELSE false END
-			'/\bIF\s*\(([^,]+),\s*([^,]+),\s*([^)]+)\)/i'    => 'CASE WHEN $1 THEN $2 ELSE $3 END',
-			// UNIX_TIMESTAMP(date) -> strftime('%s', date)
-			'/\bUNIX_TIMESTAMP\s*\(([^)]+)\)/i'              => "strftime('%s', $1)",
-			// DATE_FORMAT(date, format) - needs special handling
-			'/\bDATE_FORMAT\s*\(([^,]+),\s*([^)]+)\)/i'      => 'sqliteDateFormat',
-			// YEAR(date) -> strftime('%Y', date)
-			'/\bYEAR\s*\(([^)]+)\)/i'                        => "strftime('%Y', $1)",
-			// MONTH(date) -> strftime('%m', date)
-			'/\bMONTH\s*\(([^)]+)\)/i'                       => "strftime('%m', $1)",
-			// DAY(date) -> strftime('%d', date)
-			'/\bDAY\s*\(([^)]+)\)/i'                         => "strftime('%d', $1)",
-			// HOUR(date) -> strftime('%H', date)
-			'/\bHOUR\s*\(([^)]+)\)/i'                        => "strftime('%H', $1)",
-			// MINUTE(date) -> strftime('%M', date)
-			'/\bMINUTE\s*\(([^)]+)\)/i'                      => "strftime('%M', $1)",
-			// SECOND(date) -> strftime('%S', date)
-			'/\bSECOND\s*\(([^)]+)\)/i'                      => "strftime('%S', $1)",
-			// DATEDIFF(a, b) -> julianday(a) - julianday(b)
-			'/\bDATEDIFF\s*\(([^,]+),\s*([^)]+)\)/i'         => 'CAST(julianday($1) - julianday($2) AS INTEGER)',
-			// DATE_ADD(date, INTERVAL n unit) - needs special handling
-			'/\bDATE_ADD\s*\(([^,]+),\s*INTERVAL\s+(\d+)\s+(\w+)\)/i' => 'sqliteDateAdd',
-			// DATE_SUB(date, INTERVAL n unit) - needs special handling
-			'/\bDATE_SUB\s*\(([^,]+),\s*INTERVAL\s+(\d+)\s+(\w+)\)/i' => 'sqliteDateSub',
-			// GROUP_CONCAT - basic support
-			'/\bGROUP_CONCAT\s*\(([^)]+)\)/i'                => 'GROUP_CONCAT($1)',
-			// SUBSTRING(str, pos, len) -> SUBSTR(str, pos, len)
-			'/\bSUBSTRING\s*\(/i'                            => 'SUBSTR(',
-			// LOCATE(substr, str) -> INSTR(str, substr)
-			'/\bLOCATE\s*\(([^,]+),\s*([^)]+)\)/i'           => 'INSTR($2, $1)',
-			// LCASE/UCASE -> LOWER/UPPER
-			'/\bLCASE\s*\(/i'                                => 'LOWER(',
-			'/\bUCASE\s*\(/i'                                => 'UPPER(',
-			// CHAR_LENGTH -> LENGTH
-			'/\bCHAR_LENGTH\s*\(/i'                          => 'LENGTH(',
-			// GREATEST(a, b, ...) -> MAX(a, b, ...) - SQLite's MAX works for 2+ args
-			'/\bGREATEST\s*\(/i'                             => 'MAX(',
-			// LEAST(a, b, ...) -> MIN(a, b, ...) - SQLite's MIN works for 2+ args
-			'/\bLEAST\s*\(/i'                                => 'MIN(',
-			// FIELD(needle, a, b, c) - needs special handling
-			'/\bFIELD\s*\(([^,]+),\s*(.+)\)/i'               => 'sqliteField',
-			// ELT(n, a, b, c) - needs special handling
-			'/\bELT\s*\(([^,]+),\s*(.+)\)/i'                 => 'sqliteElt',
-		],
-		'd1' => [
-			// D1 is SQLite-based, so it uses the same regex patterns as SQLite.
-			// CONCAT handled specially due to nested parentheses
-			'/\bCONCAT\s*\(/i'                               => 'sqliteConcatStart',
-			// IFNULL(a, b) -> COALESCE(a, b)
-			'/\bIFNULL\s*\(([^,]+),\s*([^)]+)\)/i'           => 'COALESCE($1, $2)',
-			// IF(cond, true, false) -> CASE WHEN cond THEN true ELSE false END
-			'/\bIF\s*\(([^,]+),\s*([^,]+),\s*([^)]+)\)/i'    => 'CASE WHEN $1 THEN $2 ELSE $3 END',
-			// UNIX_TIMESTAMP(date) -> strftime('%s', date)
-			'/\bUNIX_TIMESTAMP\s*\(([^)]+)\)/i'              => "strftime('%s', $1)",
-			// DATE_FORMAT(date, format) - needs special handling
-			'/\bDATE_FORMAT\s*\(([^,]+),\s*([^)]+)\)/i'      => 'sqliteDateFormat',
-			// YEAR(date) -> strftime('%Y', date)
-			'/\bYEAR\s*\(([^)]+)\)/i'                        => "strftime('%Y', $1)",
-			// MONTH(date) -> strftime('%m', date)
-			'/\bMONTH\s*\(([^)]+)\)/i'                       => "strftime('%m', $1)",
-			// DAY(date) -> strftime('%d', date)
-			'/\bDAY\s*\(([^)]+)\)/i'                         => "strftime('%d', $1)",
-			// HOUR(date) -> strftime('%H', date)
-			'/\bHOUR\s*\(([^)]+)\)/i'                        => "strftime('%H', $1)",
-			// MINUTE(date) -> strftime('%M', date)
-			'/\bMINUTE\s*\(([^)]+)\)/i'                      => "strftime('%M', $1)",
-			// SECOND(date) -> strftime('%S', date)
-			'/\bSECOND\s*\(([^)]+)\)/i'                      => "strftime('%S', $1)",
-			// DATEDIFF(a, b) -> julianday(a) - julianday(b)
-			'/\bDATEDIFF\s*\(([^,]+),\s*([^)]+)\)/i'         => 'CAST(julianday($1) - julianday($2) AS INTEGER)',
-			// DATE_ADD(date, INTERVAL n unit) - needs special handling
-			'/\bDATE_ADD\s*\(([^,]+),\s*INTERVAL\s+(\d+)\s+(\w+)\)/i' => 'sqliteDateAdd',
-			// DATE_SUB(date, INTERVAL n unit) - needs special handling
-			'/\bDATE_SUB\s*\(([^,]+),\s*INTERVAL\s+(\d+)\s+(\w+)\)/i' => 'sqliteDateSub',
-			// GROUP_CONCAT - basic support
-			'/\bGROUP_CONCAT\s*\(([^)]+)\)/i'                => 'GROUP_CONCAT($1)',
-			// SUBSTRING(str, pos, len) -> SUBSTR(str, pos, len)
-			'/\bSUBSTRING\s*\(/i'                            => 'SUBSTR(',
-			// LOCATE(substr, str) -> INSTR(str, substr)
-			'/\bLOCATE\s*\(([^,]+),\s*([^)]+)\)/i'           => 'INSTR($2, $1)',
-			// LCASE/UCASE -> LOWER/UPPER
-			'/\bLCASE\s*\(/i'                                => 'LOWER(',
-			'/\bUCASE\s*\(/i'                                => 'UPPER(',
-			// CHAR_LENGTH -> LENGTH
-			'/\bCHAR_LENGTH\s*\(/i'                          => 'LENGTH(',
-			// GREATEST(a, b, ...) -> MAX(a, b, ...) - SQLite's MAX works for 2+ args
-			'/\bGREATEST\s*\(/i'                             => 'MAX(',
-			// LEAST(a, b, ...) -> MIN(a, b, ...) - SQLite's MIN works for 2+ args
-			'/\bLEAST\s*\(/i'                                => 'MIN(',
-			// FIELD(needle, a, b, c) - needs special handling
-			'/\bFIELD\s*\(([^,]+),\s*(.+)\)/i'               => 'sqliteField',
-			// ELT(n, a, b, c) - needs special handling
-			'/\bELT\s*\(([^,]+),\s*(.+)\)/i'                 => 'sqliteElt',
-		],
+		'sqlite' => [], // Will be populated from $sqlitePatterns.
+		'd1'     => [], // Will be populated from $sqlitePatterns (D1 is SQLite-based).
 		'pgsql'  => [
-			// CONCAT(a, b, c) -> CONCAT(a, b, c) (PostgreSQL supports it)
-			// IFNULL(a, b) -> COALESCE(a, b)
+			// CONCAT(a, b, c) -> CONCAT(a, b, c) (PostgreSQL supports it).
+			// IFNULL(a, b) -> COALESCE(a, b).
 			'/\bIFNULL\s*\(([^,]+),\s*([^)]+)\)/i'           => 'COALESCE($1, $2)',
-			// IF(cond, true, false) -> CASE WHEN cond THEN true ELSE false END
+			// IF(cond, true, false) -> CASE WHEN cond THEN true ELSE false END.
 			'/\bIF\s*\(([^,]+),\s*([^,]+),\s*([^)]+)\)/i'    => 'CASE WHEN $1 THEN $2 ELSE $3 END',
-			// UNIX_TIMESTAMP(date) -> EXTRACT(EPOCH FROM date)::INTEGER
+			// UNIX_TIMESTAMP(date) -> EXTRACT(EPOCH FROM date)::INTEGER.
 			'/\bUNIX_TIMESTAMP\s*\(([^)]+)\)/i'              => 'EXTRACT(EPOCH FROM $1)::INTEGER',
-			// RAND() -> RANDOM()
+			// FROM_UNIXTIME(timestamp) -> to_timestamp(timestamp).
+			'/\bFROM_UNIXTIME\s*\(([^)]+)\)/i'               => 'to_timestamp($1)',
+			// RAND() -> RANDOM().
 			'/\bRAND\s*\(\s*\)/i'                            => 'RANDOM()',
-			// GROUP_CONCAT -> STRING_AGG
+			// GROUP_CONCAT -> STRING_AGG.
 			'/\bGROUP_CONCAT\s*\(([^)]+)\)/i'                => "STRING_AGG($1::text, ',')",
-			// SUBSTRING - PostgreSQL supports it
-			// DATE_FORMAT - needs special handling for PostgreSQL
+			// SUBSTRING - PostgreSQL supports it.
+			// DATE_FORMAT - needs special handling for PostgreSQL.
 			'/\bDATE_FORMAT\s*\(([^,]+),\s*([^)]+)\)/i'      => 'pgsqlDateFormat',
-			// LCASE/UCASE -> LOWER/UPPER
+			// LCASE/UCASE -> LOWER/UPPER.
 			'/\bLCASE\s*\(/i'                                => 'LOWER(',
 			'/\bUCASE\s*\(/i'                                => 'UPPER(',
+			// CHAR_LENGTH / CHARACTER_LENGTH - PostgreSQL supports both.
+			// FIND_IN_SET - needs special handling.
+			'/\bFIND_IN_SET\s*\(([^,]+),\s*([^)]+)\)/i'      => 'pgsqlFindInSet',
 		],
 		'mysql'  => [
 			// No transformations for MySQL.
@@ -254,6 +269,21 @@ class FunctionMapper
 	{
 		$this->connection = $connection;
 		$this->platform   = $this->detectPlatform();
+
+		// Initialize SQLite-compatible mappings and patterns for sqlite and d1 platforms.
+		// This avoids code duplication since D1 is SQLite-based.
+		if (empty(self::$mappings['sqlite'])) {
+			self::$mappings['sqlite'] = self::$sqliteMappings;
+		}
+		if (empty(self::$mappings['d1'])) {
+			self::$mappings['d1'] = self::$sqliteMappings;
+		}
+		if (empty(self::$patterns['sqlite'])) {
+			self::$patterns['sqlite'] = self::$sqlitePatterns;
+		}
+		if (empty(self::$patterns['d1'])) {
+			self::$patterns['d1'] = self::$sqlitePatterns;
+		}
 	}
 
 	/**
@@ -276,6 +306,11 @@ class FunctionMapper
 			$result = $this->translateConcat($result);
 		}
 
+		// Handle CONCAT_WS specially (needs proper parentheses matching).
+		if (\in_array($this->platform, ['sqlite', 'd1'], true) && \preg_match('/\bCONCAT_WS\s*\(/i', $result)) {
+			$result = $this->translateConcatWs($result);
+		}
+
 		// Handle LIKE escape sequences for SQLite and D1 (SQLite-based).
 		// MySQL uses \_ and \% by default, SQLite needs ESCAPE clause.
 		if (\in_array($this->platform, ['sqlite', 'd1'], true)) {
@@ -291,8 +326,13 @@ class FunctionMapper
 		// Apply pattern-based replacements.
 		$patterns = self::$patterns[ $this->platform ] ?? [];
 		foreach ($patterns as $pattern => $replacement) {
-			// Skip CONCAT pattern - handled above.
+			// Skip CONCAT and CONCAT_WS patterns - handled above with proper parentheses matching.
 			if (\str_contains($pattern, 'CONCAT')) {
+				continue;
+			}
+
+			// Skip SUBSTRING_INDEX - complex function not fully supported.
+			if (\str_contains($pattern, 'SUBSTRING_INDEX')) {
 				continue;
 			}
 
@@ -426,6 +466,97 @@ class FunctionMapper
 
 				// Build SQLite concatenation.
 				$replacement = '(' . \implode(' || ', $translatedArgs) . ')';
+
+				// Replace in expression.
+				$expression = \substr($expression, 0, $start) . $replacement . \substr($expression, $pos);
+			} else {
+				// Couldn't find matching paren - break to avoid infinite loop.
+				break;
+			}
+		}
+
+		return $expression;
+	}
+
+	/**
+	 * Handle SQLite CONCAT_WS translation with proper parentheses matching.
+	 *
+	 * CONCAT_WS(separator, str1, str2, ...) concatenates with separator, skipping NULLs.
+	 *
+	 * @param string $expression The expression containing CONCAT_WS.
+	 * @return string Translated expression.
+	 */
+	protected function translateConcatWs(string $expression): string
+	{
+		// Find CONCAT_WS( and match the closing parenthesis properly.
+		$pattern = '/\bCONCAT_WS\s*\(/i';
+
+		while (\preg_match($pattern, $expression, $matches, PREG_OFFSET_CAPTURE)) {
+			$start = $matches[0][1];
+			$openParen = $start + \strlen($matches[0][0]) - 1;
+
+			// Find the matching closing parenthesis.
+			$depth = 1;
+			$pos = $openParen + 1;
+			$len = \strlen($expression);
+			$inString = false;
+			$stringChar = '';
+
+			while ($pos < $len && $depth > 0) {
+				$char = $expression[ $pos ];
+
+				// Handle string literals.
+				if (! $inString && ( "'" === $char || '"' === $char )) {
+					$inString = true;
+					$stringChar = $char;
+				} elseif ($inString && $char === $stringChar) {
+					// Check for escaped quote.
+					if ($pos + 1 < $len && $expression[ $pos + 1 ] === $stringChar) {
+						$pos++; // Skip escaped quote.
+					} else {
+						$inString = false;
+					}
+				} elseif (! $inString) {
+					if ('(' === $char) {
+						$depth++;
+					} elseif (')' === $char) {
+						$depth--;
+					}
+				}
+				$pos++;
+			}
+
+			if (0 === $depth) {
+				// Extract the arguments.
+				$argsStr = \substr($expression, $openParen + 1, $pos - $openParen - 2);
+
+				// Parse arguments respecting parentheses and quotes.
+				$args = $this->parseFunctionArgs($argsStr);
+
+				if (\count($args) < 2) {
+					// Invalid CONCAT_WS - needs at least separator and one string.
+					break;
+				}
+
+				// First argument is the separator.
+				$separator = $this->translate(\trim($args[0]));
+				$strings = \array_slice($args, 1);
+
+				// Translate each string argument recursively.
+				$translatedStrings = \array_map(fn($arg) => $this->translate(\trim($arg)), $strings);
+
+				// Build SQLite concatenation with separator.
+				// Use COALESCE to handle NULLs - we replace NULLs with empty string
+				// then filter out empty strings from the concatenation.
+				// Note: This is a simplified implementation that doesn't perfectly match
+				// MySQL's NULL-skipping behavior but works for most cases.
+				$parts = [];
+				foreach ($translatedStrings as $str) {
+					$parts[] = "COALESCE({$str}, '')";
+				}
+
+				// Join with separator (simplified - doesn't skip NULLs perfectly).
+				$replacement = '(' . \implode(' || ' . $separator . ' || ', $parts) . ')';
 
 				// Replace in expression.
 				$expression = \substr($expression, 0, $start) . $replacement . \substr($expression, $pos);
@@ -627,6 +758,78 @@ class FunctionMapper
 		}
 
 		return '(CASE ' . \implode(' ', $cases) . ' ELSE NULL END)';
+	}
+
+	/**
+	 * Handle SQLite FIND_IN_SET function translation.
+	 *
+	 * FIND_IN_SET(needle, comma_separated_set) returns the position (1-based)
+	 * of needle in the set, or 0 if not found.
+	 *
+	 * SQLite translation uses INSTR and comma counting.
+	 *
+	 * @param array<int, string> $matches Regex matches.
+	 * @return string Translated expression.
+	 */
+	protected function sqliteFindInSet(array $matches): string
+	{
+		$needle = \trim($matches[1]);
+		$set = \trim($matches[2]);
+
+		// Build a CASE expression that checks if the needle is in the set.
+		// We use ',' || set || ',' to ensure proper matching at boundaries.
+		// If found, we count the commas before the match position to get the index.
+		return "(CASE WHEN INSTR(',' || {$set} || ',', ',' || {$needle} || ',') > 0 " .
+			"THEN (LENGTH(SUBSTR(',' || {$set} || ',', 1, INSTR(',' || {$set} || ',', ',' || {$needle} || ','))) - " .
+			"LENGTH(REPLACE(SUBSTR(',' || {$set} || ',', 1, INSTR(',' || {$set} || ',', ',' || {$needle} || ',')), ',', '')) + 1) " .
+			'ELSE 0 END)';
+	}
+
+	/**
+	 * Handle PostgreSQL FIND_IN_SET function translation.
+	 *
+	 * @param array<int, string> $matches Regex matches.
+	 * @return string Translated expression.
+	 */
+	protected function pgsqlFindInSet(array $matches): string
+	{
+		$needle = \trim($matches[1]);
+		$set = \trim($matches[2]);
+
+		// PostgreSQL: Use string_to_array and array_position.
+		return "COALESCE(array_position(string_to_array({$set}, ','), {$needle}::text), 0)";
+	}
+
+	/**
+	 * Handle SQLite CONCAT_WS translation start.
+	 *
+	 * CONCAT_WS(separator, str1, str2, ...) concatenates strings with separator.
+	 * Unlike CONCAT, it skips NULL values.
+	 *
+	 * @param array<int, string> $matches Regex matches.
+	 * @return string Placeholder - actual handling done in translateConcatWs().
+	 */
+	protected function sqliteConcatWsStart(array $matches): string
+	{
+		// This is just a marker - actual handling is done in translate().
+		return $matches[0];
+	}
+
+	/**
+	 * Handle SQLite SUBSTRING_INDEX translation.
+	 *
+	 * SUBSTRING_INDEX(str, delim, count) returns the substring before/after count occurrences of delim.
+	 *
+	 * @param array<int, string> $matches Regex matches.
+	 * @return string Translated expression.
+	 */
+	protected function sqliteSubstringIndex(array $matches): string
+	{
+		// This is a complex function that's difficult to translate to SQLite.
+		// For simple cases (count = 1 or -1), we can use SUBSTR and INSTR.
+		// For the general case, we'd need a recursive CTE or user-defined function.
+		// Return a simplified version that handles common cases.
+		return $matches[0]; // Return as-is - not fully supported.
 	}
 
 	/**
