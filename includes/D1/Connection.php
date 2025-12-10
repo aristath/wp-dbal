@@ -242,4 +242,39 @@ class Connection implements ConnectionInterface
 	{
 		return $this->httpClient;
 	}
+
+	/**
+	 * Check if the connection is established.
+	 *
+	 * Since D1 uses a stateless REST API, there's no persistent connection.
+	 * This method returns true if the HTTP client is initialized with valid
+	 * credentials (we assume the connection is "ready" if configured).
+	 *
+	 * For a true connection check, use testConnection() which makes an API call.
+	 *
+	 * @return bool True if the connection is ready to use.
+	 */
+	public function isConnected(): bool
+	{
+		// D1 is REST-based and stateless - there's no persistent connection.
+		// We consider it "connected" if the HTTP client is initialized.
+		return isset($this->httpClient);
+	}
+
+	/**
+	 * Test the connection by executing a simple query.
+	 *
+	 * This makes an actual API call to verify connectivity.
+	 *
+	 * @return bool True if the connection is working.
+	 */
+	public function testConnection(): bool
+	{
+		try {
+			$this->httpClient->query('SELECT 1');
+			return true;
+		} catch (\Exception $e) {
+			return false;
+		}
+	}
 }
