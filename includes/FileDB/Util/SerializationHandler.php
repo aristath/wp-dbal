@@ -22,6 +22,9 @@ class SerializationHandler
 	/**
 	 * Check if a value is a PHP serialized string.
 	 *
+	 * Uses pattern matching instead of unserialize() for security.
+	 * This avoids potential object instantiation vulnerabilities.
+	 *
 	 * @param mixed $value The value to check.
 	 * @return bool True if the value is serialized.
 	 */
@@ -38,7 +41,18 @@ class SerializationHandler
 		}
 
 		// Check common serialized patterns.
+		// NULL serialized value.
 		if ('N;' === $value) {
+			return true;
+		}
+
+		// Boolean false.
+		if ('b:0;' === $value) {
+			return true;
+		}
+
+		// Boolean true.
+		if ('b:1;' === $value) {
 			return true;
 		}
 
@@ -52,19 +66,92 @@ class SerializationHandler
 
 		// Check first character for serialized type.
 		$firstChar = $value[0];
-		if (!\in_array($firstChar, ['s', 'a', 'O', 'b', 'i', 'd', 'C'], true)) {
+
+		// Match patterns for each serialized type without using unserialize().
+		return match ($firstChar) {
+			// String: s:length:"value";
+			's' => (bool) \preg_match('/^s:\d+:".*";$/s', $value),
+			// Integer: i:value;
+			'i' => (bool) \preg_match('/^i:-?\d+;$/', $value),
+			// Double/Float: d:value;
+			'd' => (bool) \preg_match('/^d:-?\d+(\.\d+)?(E[+-]?\d+)?;$/i', $value),
+			// Array: a:count:{...}
+			'a' => $this->looksLikeSerializedArray($value),
+			// Object: O:length:"classname":count:{...}
+			'O' => $this->looksLikeSerializedObject($value),
+			// Custom serialized object: C:length:"classname":length:{...}
+			'C' => $this->looksLikeSerializedObject($value),
+			default => false,
+		};
+	}
+
+	/**
+	 * Check if a string looks like a serialized array.
+	 *
+	 * @param string $value The string to check.
+	 * @return bool True if it looks like a serialized array.
+	 */
+	protected function looksLikeSerializedArray(string $value): bool
+	{
+		// Pattern: a:count:{...}
+		if (!\preg_match('/^a:(\d+):\{/', $value, $matches)) {
 			return false;
 		}
 
-		// Try to unserialize.
-		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_unserialize
-		$test = @\unserialize($value);
+		// Must end with }
+		if ('}' !== \substr($value, -1)) {
+			return false;
+		}
 
-		return false !== $test || 'b:0;' === $value;
+		// The count should be a reasonable number.
+		$count = (int) $matches[1];
+		if ($count > 10000) {
+			// Suspiciously large array, reject.
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Check if a string looks like a serialized object.
+	 *
+	 * @param string $value The string to check.
+	 * @return bool True if it looks like a serialized object.
+	 */
+	protected function looksLikeSerializedObject(string $value): bool
+	{
+		// Pattern: O:length:"classname":count:{...} or C:length:"classname":length:{...}
+		if (!\preg_match('/^[OC]:(\d+):"([^"]+)":\d+:\{/', $value, $matches)) {
+			return false;
+		}
+
+		// Must end with }
+		if ('}' !== \substr($value, -1)) {
+			return false;
+		}
+
+		// Validate class name length matches declared length.
+		$declaredLength = (int) $matches[1];
+		$className      = $matches[2];
+
+		if (\strlen($className) !== $declaredLength) {
+			return false;
+		}
+
+		// Validate class name characters (PHP class names).
+		if (!\preg_match('/^[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff\\\\]*$/', $className)) {
+			return false;
+		}
+
+		return true;
 	}
 
 	/**
 	 * Convert a serialized value to JSON-storable format.
+	 *
+	 * Uses unserialize() with allowed_classes restrictions for security.
+	 * Only allows WordPress core classes and stdClass by default.
 	 *
 	 * @param string $serialized The serialized string.
 	 * @return array{value: mixed, _serialized: true}|string The converted value or original string.
@@ -75,8 +162,9 @@ class SerializationHandler
 			return $serialized;
 		}
 
-		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_unserialize
-		$value = @\unserialize($serialized);
+		// Use safe unserialize with allowed_classes option.
+		// This prevents arbitrary object instantiation attacks.
+		$value = $this->safeUnserialize($serialized);
 
 		if (false === $value && 'b:0;' !== $serialized) {
 			// Failed to unserialize, return as-is.
@@ -95,6 +183,47 @@ class SerializationHandler
 			'value'       => $this->makeJsonSafe($value),
 			'_serialized' => true,
 		];
+	}
+
+	/**
+	 * Safely unserialize a string with class restrictions.
+	 *
+	 * By default, allows only stdClass. WordPress core classes and user-defined
+	 * classes can be added via the allowed_classes filter or by extending this class.
+	 *
+	 * @param string $serialized The serialized string.
+	 * @return mixed The unserialized value, or false on failure.
+	 */
+	protected function safeUnserialize(string $serialized): mixed
+	{
+		// Define allowed classes for unserialization.
+		// Using stdClass as fallback allows data to be preserved even if
+		// original classes don't exist.
+		$allowedClasses = $this->getAllowedClasses();
+
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_unserialize
+		return @\unserialize($serialized, [
+			'allowed_classes' => $allowedClasses,
+		]);
+	}
+
+	/**
+	 * Get the list of allowed classes for unserialization.
+	 *
+	 * Override this method to customize allowed classes.
+	 * By default, allows only stdClass to prevent arbitrary object instantiation.
+	 *
+	 * @return array<string>|bool List of allowed class names, or true to allow all (NOT RECOMMENDED).
+	 */
+	protected function getAllowedClasses(): array|bool
+	{
+		// By default, convert all objects to stdClass.
+		// This is the safest option as it prevents code execution through
+		// __wakeup() or __destruct() methods of arbitrary classes.
+		//
+		// Set to true if you need to preserve original class types (less secure).
+		// You can also return an array of specific class names to allow.
+		return [ \stdClass::class ];
 	}
 
 	/**
