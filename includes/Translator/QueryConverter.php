@@ -73,13 +73,30 @@ class QueryConverter
 
 		// Convert based on statement type.
 		return match (true) {
-			$statement instanceof SelectStatement  => $this->convertSelect($statement),
+			$statement instanceof SelectStatement  => $this->convertSelectStatement($statement, $query),
 			$statement instanceof InsertStatement  => $this->convertInsert($statement),
 			$statement instanceof UpdateStatement  => $this->convertUpdate($statement),
 			$statement instanceof DeleteStatement  => $this->convertDelete($statement),
 			$statement instanceof ReplaceStatement => $this->convertReplace($statement),
 			default                                => $query, // Pass through unsupported statements.
 		};
+	}
+
+	/**
+	 * Convert SELECT statement, handling UNION if present.
+	 *
+	 * @param SelectStatement $stmt          The parsed SELECT statement.
+	 * @param string          $originalQuery The original query for UNION type detection.
+	 * @return string The converted SQL.
+	 */
+	protected function convertSelectStatement(SelectStatement $stmt, string $originalQuery): string
+	{
+		// Check for UNION queries.
+		if (! empty($stmt->union)) {
+			return $this->convertSelectWithUnion($stmt, $originalQuery);
+		}
+
+		return $this->convertSelect($stmt);
 	}
 
 	/**
@@ -197,6 +214,96 @@ class QueryConverter
 		}
 
 		return $qb->getSQL();
+	}
+
+	/**
+	 * Convert SELECT statement with UNION clauses.
+	 *
+	 * Handles UNION, UNION ALL, UNION DISTINCT.
+	 *
+	 * @param SelectStatement $stmt          The parsed SELECT statement with union.
+	 * @param string          $originalQuery The original query for UNION type detection.
+	 * @return string The converted SQL.
+	 */
+	protected function convertSelectWithUnion(SelectStatement $stmt, string $originalQuery): string
+	{
+		// Detect UNION types from the original query.
+		// We look for UNION ALL, UNION DISTINCT, or plain UNION.
+		$unionTypes = $this->detectUnionTypes($originalQuery);
+
+		// First, we need to convert the main SELECT (without its union parts).
+		// Create a clone without the union to convert just the base SELECT.
+		$baseStmt = clone $stmt;
+		$baseStmt->union = [];
+
+		// Also need to clear ORDER BY and LIMIT since those apply to final result.
+		$baseStmt->order = [];
+		$baseStmt->limit = null;
+
+		// Convert the base SELECT.
+		$sql = '(' . $this->convertSelect($baseStmt) . ')';
+
+		// Process each UNION clause.
+		foreach ($stmt->union as $index => $unionPart) {
+			// Get the union keyword for this part (UNION, UNION ALL, or UNION DISTINCT).
+			$unionKeyword = $unionTypes[ $index ] ?? 'UNION';
+
+			// Convert the union SELECT statement.
+			$convertedUnionSql = $this->convertSelect($unionPart);
+
+			// Wrap in parentheses for clarity and proper precedence.
+			$sql .= ' ' . $unionKeyword . ' (' . $convertedUnionSql . ')';
+		}
+
+		// Apply ORDER BY and LIMIT from the main statement if present.
+		// These apply to the entire UNION result set.
+		if (! empty($stmt->order)) {
+			$orderParts = [];
+			foreach ($stmt->order as $order) {
+				$orderExpr = $this->functionMapper->translate($order->expr->expr);
+				$orderParts[] = $orderExpr . ' ' . $order->type;
+			}
+			$sql .= ' ORDER BY ' . \implode(', ', $orderParts);
+		}
+
+		if (null !== $stmt->limit) {
+			$sql .= ' LIMIT ' . (int) $stmt->limit->rowCount;
+			if ($stmt->limit->offset > 0) {
+				$sql .= ' OFFSET ' . (int) $stmt->limit->offset;
+			}
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Detect UNION types (UNION, UNION ALL, UNION DISTINCT) from query string.
+	 *
+	 * @param string $query The original query.
+	 * @return array<int, string> Array of UNION keywords found.
+	 */
+	protected function detectUnionTypes(string $query): array
+	{
+		$types = [];
+
+		// Find all UNION keywords with their modifiers.
+		// We need to match: UNION ALL, UNION DISTINCT, or just UNION.
+		// The regex needs to handle case-insensitivity and whitespace variations.
+		$pattern = '/\bUNION\s+(ALL|DISTINCT)\b|\bUNION\b/i';
+
+		if (\preg_match_all($pattern, $query, $matches, PREG_SET_ORDER)) {
+			foreach ($matches as $match) {
+				if (isset($match[1])) {
+					// UNION ALL or UNION DISTINCT.
+					$types[] = 'UNION ' . \strtoupper($match[1]);
+				} else {
+					// Plain UNION.
+					$types[] = 'UNION';
+				}
+			}
+		}
+
+		return $types;
 	}
 
 	/**
