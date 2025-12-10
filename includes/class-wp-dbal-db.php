@@ -1196,11 +1196,11 @@ class WP_DBAL_DB extends \wpdb
 	 * @param string                      $table  The table name.
 	 * @param array<string, mixed>        $data   Data to insert (column => value pairs).
 	 * @param array<string>|string|null   $format Optional. An array of formats.
-	 * @param string                      $type   Type of operation (INSERT or REPLACE).
+	 * @param string                      $type   Optional. Type of operation (INSERT or REPLACE). Default 'INSERT'.
 	 * @return int|false The number of rows inserted, or false on error.
 	 */
 	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps, PSR2.Methods.MethodDeclaration.Underscore, Squiz.NamingConventions.ValidFunctionName.PublicUnderscore -- wpdb helper
-	protected function _insert_replace_helper($table, $data, $format, $type)
+	public function _insert_replace_helper($table, $data, $format = null, $type = 'INSERT')
 	{
 		if (empty($data)) {
 			return false;

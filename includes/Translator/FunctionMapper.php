@@ -113,14 +113,14 @@ class FunctionMapper
 		'/\bFROM_UNIXTIME\s*\(([^)]+)\)/i'               => "datetime($1, 'unixepoch', 'localtime')",
 		// DATE_FORMAT(date, format) - needs special handling.
 		'/\bDATE_FORMAT\s*\(([^,]+),\s*([^)]+)\)/i'      => 'sqliteDateFormat',
-		// YEAR(date) -> strftime('%Y', date).
-		'/\bYEAR\s*\(([^)]+)\)/i'                        => "CAST(strftime('%Y', $1) AS INTEGER)",
-		// MONTH(date) -> strftime('%m', date).
-		'/\bMONTH\s*\(([^)]+)\)/i'                       => "CAST(strftime('%m', $1) AS INTEGER)",
-		// DAY(date) -> strftime('%d', date).
-		'/\bDAY\s*\(([^)]+)\)/i'                         => "CAST(strftime('%d', $1) AS INTEGER)",
-		// DAYOFMONTH(date) -> strftime('%d', date).
-		'/\bDAYOFMONTH\s*\(([^)]+)\)/i'                  => "CAST(strftime('%d', $1) AS INTEGER)",
+		// YEAR(date) -> strftime('%Y', date) - needs special handling for nested functions.
+		'/\bYEAR\s*\(/i'                                 => 'sqliteYearStart',
+		// MONTH(date) -> strftime('%m', date) - needs special handling for nested functions.
+		'/\bMONTH\s*\(/i'                                => 'sqliteMonthStart',
+		// DAY(date) -> strftime('%d', date) - needs special handling for nested functions.
+		'/\bDAY\s*\(/i'                                  => 'sqliteDayStart',
+		// DAYOFMONTH(date) -> strftime('%d', date) - needs special handling for nested functions.
+		'/\bDAYOFMONTH\s*\(/i'                           => 'sqliteDayOfMonthStart',
 		// DAYOFWEEK(date) -> strftime('%w', date) + 1 (MySQL is 1-7, SQLite is 0-6).
 		'/\bDAYOFWEEK\s*\(([^)]+)\)/i'                   => "(CAST(strftime('%w', $1) AS INTEGER) + 1)",
 		// DAYOFYEAR(date) -> strftime('%j', date).
@@ -311,6 +311,15 @@ class FunctionMapper
 			$result = $this->translateConcatWs($result);
 		}
 
+		// Handle date extraction functions (YEAR, MONTH, DAY, DAYOFMONTH) with proper parentheses matching.
+		// These need special handling because they may contain nested functions.
+		if (\in_array($this->platform, ['sqlite', 'd1'], true)) {
+			$result = $this->translateDateExtract($result, 'YEAR', '%Y');
+			$result = $this->translateDateExtract($result, 'MONTH', '%m');
+			$result = $this->translateDateExtract($result, 'DAYOFMONTH', '%d');
+			$result = $this->translateDateExtract($result, 'DAY', '%d');
+		}
+
 		// Handle LIKE escape sequences for SQLite and D1 (SQLite-based).
 		// MySQL uses \_ and \% by default, SQLite needs ESCAPE clause.
 		if (\in_array($this->platform, ['sqlite', 'd1'], true)) {
@@ -333,6 +342,14 @@ class FunctionMapper
 
 			// Skip SUBSTRING_INDEX - complex function not fully supported.
 			if (\str_contains($pattern, 'SUBSTRING_INDEX')) {
+				continue;
+			}
+
+			// Skip YEAR, MONTH, DAY, DAYOFMONTH - handled above with proper parentheses matching.
+			if (
+				\str_contains($pattern, 'YEAR') || \str_contains($pattern, 'MONTH') ||
+				\str_contains($pattern, 'DAYOFMONTH') || \preg_match('/\\\\bDAY\\\\s/', $pattern)
+			) {
 				continue;
 			}
 
@@ -557,6 +574,74 @@ class FunctionMapper
 
 				// Join with separator (simplified - doesn't skip NULLs perfectly).
 				$replacement = '(' . \implode(' || ' . $separator . ' || ', $parts) . ')';
+
+				// Replace in expression.
+				$expression = \substr($expression, 0, $start) . $replacement . \substr($expression, $pos);
+			} else {
+				// Couldn't find matching paren - break to avoid infinite loop.
+				break;
+			}
+		}
+
+		return $expression;
+	}
+
+	/**
+	 * Translate date extraction functions (YEAR, MONTH, DAY, etc.) with proper parentheses matching.
+	 *
+	 * @param string $expression The expression containing the function.
+	 * @param string $funcName   The MySQL function name (e.g., 'YEAR', 'MONTH').
+	 * @param string $format     The SQLite strftime format code (e.g., '%Y', '%m').
+	 * @return string Translated expression.
+	 */
+	protected function translateDateExtract(string $expression, string $funcName, string $format): string
+	{
+		$pattern = '/\b' . $funcName . '\s*\(/i';
+
+		while (\preg_match($pattern, $expression, $matches, PREG_OFFSET_CAPTURE)) {
+			$start = $matches[0][1];
+			$openParen = $start + \strlen($matches[0][0]) - 1;
+
+			// Find the matching closing parenthesis.
+			$depth = 1;
+			$pos = $openParen + 1;
+			$len = \strlen($expression);
+			$inString = false;
+			$stringChar = '';
+
+			while ($pos < $len && $depth > 0) {
+				$char = $expression[ $pos ];
+
+				// Handle string literals.
+				if (! $inString && ( "'" === $char || '"' === $char )) {
+					$inString = true;
+					$stringChar = $char;
+				} elseif ($inString && $char === $stringChar) {
+					// Check for escaped quote.
+					if ($pos + 1 < $len && $expression[ $pos + 1 ] === $stringChar) {
+						$pos++; // Skip escaped quote.
+					} else {
+						$inString = false;
+					}
+				} elseif (! $inString) {
+					if ('(' === $char) {
+						$depth++;
+					} elseif (')' === $char) {
+						$depth--;
+					}
+				}
+				$pos++;
+			}
+
+			if (0 === $depth) {
+				// Extract the argument.
+				$arg = \substr($expression, $openParen + 1, $pos - $openParen - 2);
+
+				// Translate the argument recursively (may contain nested functions).
+				$translatedArg = $this->translate(\trim($arg));
+
+				// Build the SQLite replacement.
+				$replacement = "CAST(strftime('{$format}', {$translatedArg}) AS INTEGER)";
 
 				// Replace in expression.
 				$expression = \substr($expression, 0, $start) . $replacement . \substr($expression, $pos);
@@ -830,6 +915,50 @@ class FunctionMapper
 		// For the general case, we'd need a recursive CTE or user-defined function.
 		// Return a simplified version that handles common cases.
 		return $matches[0]; // Return as-is - not fully supported.
+	}
+
+	/**
+	 * Handle SQLite YEAR translation start - for nested function support.
+	 *
+	 * @param array<int, string> $matches Regex matches.
+	 * @return string Placeholder - actual handling done in translate().
+	 */
+	protected function sqliteYearStart(array $matches): string
+	{
+		return $matches[0];
+	}
+
+	/**
+	 * Handle SQLite MONTH translation start - for nested function support.
+	 *
+	 * @param array<int, string> $matches Regex matches.
+	 * @return string Placeholder - actual handling done in translate().
+	 */
+	protected function sqliteMonthStart(array $matches): string
+	{
+		return $matches[0];
+	}
+
+	/**
+	 * Handle SQLite DAY translation start - for nested function support.
+	 *
+	 * @param array<int, string> $matches Regex matches.
+	 * @return string Placeholder - actual handling done in translate().
+	 */
+	protected function sqliteDayStart(array $matches): string
+	{
+		return $matches[0];
+	}
+
+	/**
+	 * Handle SQLite DAYOFMONTH translation start - for nested function support.
+	 *
+	 * @param array<int, string> $matches Regex matches.
+	 * @return string Placeholder - actual handling done in translate().
+	 */
+	protected function sqliteDayOfMonthStart(array $matches): string
+	{
+		return $matches[0];
 	}
 
 	/**
