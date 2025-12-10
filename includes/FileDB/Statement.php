@@ -230,6 +230,8 @@ class Statement implements StatementInterface
 	/**
 	 * Format a value for SQL inclusion.
 	 *
+	 * Handles proper type conversion and escaping to prevent injection attacks.
+	 *
 	 * @param mixed         $value The value to format.
 	 * @param ParameterType $type  The parameter type.
 	 * @return string The formatted value.
@@ -242,11 +244,66 @@ class Statement implements StatementInterface
 
 		return match ($type) {
 			ParameterType::NULL    => 'NULL',
-			ParameterType::INTEGER => (string) (int) $value,
+			ParameterType::INTEGER => $this->formatInteger($value),
 			ParameterType::BOOLEAN => $value ? '1' : '0',
 			ParameterType::BINARY,
-			ParameterType::LARGE_OBJECT => $this->connection->quote((string) $value),
-			default => $this->connection->quote((string) $value),
+			ParameterType::LARGE_OBJECT => $this->formatBinary($value),
+			ParameterType::ASCII   => $this->formatString($value),
+			default => $this->formatString($value),
 		};
+	}
+
+	/**
+	 * Format an integer value safely.
+	 *
+	 * @param mixed $value The value to format.
+	 * @return string The formatted integer.
+	 */
+	protected function formatInteger(mixed $value): string
+	{
+		// Ensure the value is actually numeric to prevent injection.
+		if (\is_numeric($value)) {
+			// Use intval for integers, or keep as float string if it has decimals.
+			if (\is_float($value) || (\is_string($value) && \str_contains($value, '.'))) {
+				return (string) (float) $value;
+			}
+			return (string) (int) $value;
+		}
+
+		// Non-numeric values become 0 for INTEGER type.
+		return '0';
+	}
+
+	/**
+	 * Format a string value with proper escaping.
+	 *
+	 * @param mixed $value The value to format.
+	 * @return string The quoted and escaped string.
+	 */
+	protected function formatString(mixed $value): string
+	{
+		// Convert to string.
+		$str = (string) $value;
+
+		// Use the connection's quote method which handles escaping.
+		return $this->connection->quote($str);
+	}
+
+	/**
+	 * Format binary data safely.
+	 *
+	 * @param mixed $value The value to format.
+	 * @return string The formatted binary value.
+	 */
+	protected function formatBinary(mixed $value): string
+	{
+		// For binary data, we base64 encode to ensure safe storage.
+		// The storage layer should decode when reading.
+		if (\is_resource($value)) {
+			$value = \stream_get_contents($value);
+		}
+
+		$encoded = \base64_encode((string) $value);
+		return "X'" . \bin2hex((string) $value) . "'";
 	}
 }

@@ -137,13 +137,22 @@ class Connection implements ConnectionInterface
 	/**
 	 * Quote a string for use in a query.
 	 *
+	 * Uses SQLite-style escaping (double single quotes) which is safer
+	 * and more consistent than addslashes for SQL contexts.
+	 *
 	 * @param string $value The value to quote.
 	 * @return string The quoted value.
 	 */
 	public function quote(string $value): string
 	{
-		// Simple escaping for file-based storage.
-		return "'" . \addslashes($value) . "'";
+		// Use SQLite-style escaping: single quotes are escaped by doubling them.
+		// This is safer than addslashes which can have encoding issues.
+		$escaped = \str_replace("'", "''", $value);
+
+		// Also escape backslashes for consistency.
+		$escaped = \str_replace('\\', '\\\\', $escaped);
+
+		return "'" . $escaped . "'";
 	}
 
 	/**
