@@ -105,16 +105,9 @@ class HttpClient
 			$body['params'] = $this->normalizeParams($params);
 		}
 
-		// Log the request for debugging SQLITE_AUTH errors.
-		\error_log(\sprintf('D1 HttpClient: Executing SQL: %s', \substr($sql, 0, 500)));
-		if (! empty($params)) {
-			$paramsToLog = \array_map(function($param) {
-				if (\is_string($param) && \strlen($param) > 100) {
-					return \substr($param, 0, 100) . '... (truncated, length: ' . \strlen($param) . ')';
-				}
-				return $param;
-			}, $body['params']);
-			\error_log(\sprintf('D1 HttpClient: Parameters (%d): %s', \count($params), \var_export($paramsToLog, true)));
+		// Only log in debug mode, and redact sensitive information.
+		if (\defined('WP_DEBUG') && WP_DEBUG && \defined('WP_DBAL_DEBUG') && WP_DBAL_DEBUG) {
+			$this->logQuery($sql, $params);
 		}
 
 		$response = $this->makeRequest($url, $body);
@@ -213,6 +206,62 @@ class HttpClient
 			$this->accountId,
 			$this->databaseId
 		);
+	}
+
+	/**
+	 * Log a query with redacted sensitive information.
+	 *
+	 * Only called when WP_DEBUG and WP_DBAL_DEBUG are both true.
+	 * Redacts password fields and truncates long values.
+	 *
+	 * @param string       $sql    The SQL query.
+	 * @param array<mixed> $params The query parameters.
+	 * @return void
+	 */
+	protected function logQuery(string $sql, array $params): void
+	{
+		// List of parameter names/patterns that might contain sensitive data.
+		$sensitivePatterns = [
+			'password', 'passwd', 'pass', 'pwd',
+			'secret', 'token', 'key', 'api_key', 'apikey',
+			'auth', 'credential', 'private',
+			'credit_card', 'card_number', 'cvv', 'ssn',
+		];
+
+		// Log the SQL (truncated to 500 chars).
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Only in debug mode
+		\error_log(\sprintf('D1 HttpClient: Executing SQL: %s', \substr($sql, 0, 500)));
+
+		if (empty($params)) {
+			return;
+		}
+
+		// Redact sensitive parameters.
+		$safeParams = [];
+		foreach ($params as $key => $value) {
+			$keyLower = \strtolower((string) $key);
+
+			// Check if key matches sensitive patterns.
+			$isSensitive = false;
+			foreach ($sensitivePatterns as $pattern) {
+				if (\str_contains($keyLower, $pattern)) {
+					$isSensitive = true;
+					break;
+				}
+			}
+
+			if ($isSensitive) {
+				$safeParams[$key] = '[REDACTED]';
+			} elseif (\is_string($value) && \strlen($value) > 50) {
+				// Truncate long strings.
+				$safeParams[$key] = \substr($value, 0, 50) . '... (length: ' . \strlen($value) . ')';
+			} else {
+				$safeParams[$key] = $value;
+			}
+		}
+
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log, WordPress.PHP.DevelopmentFunctions.error_log_var_export -- Only in debug mode
+		\error_log(\sprintf('D1 HttpClient: Parameters (%d): %s', \count($params), \var_export($safeParams, true)));
 	}
 
 	/**
