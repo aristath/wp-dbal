@@ -278,4 +278,40 @@ class Connection implements ConnectionInterface
 	{
 		return $this->executor;
 	}
+
+	/**
+	 * Check if the connection is established.
+	 *
+	 * For file-based storage, this checks if the storage directory exists
+	 * and is writable.
+	 *
+	 * @return bool True if the connection is ready to use.
+	 */
+	public function isConnected(): bool
+	{
+		// FileDB is "connected" if the storage manager is initialized
+		// and the storage directory exists and is writable.
+		if (!isset($this->storage)) {
+			return false;
+		}
+
+		$basePath = $this->storage->getBasePath();
+		return \is_dir($basePath) && \is_writable($basePath);
+	}
+
+	/**
+	 * Test the connection by attempting a simple operation.
+	 *
+	 * @return bool True if the connection is working.
+	 */
+	public function testConnection(): bool
+	{
+		try {
+			// Try to list tables (this tests read access).
+			$this->storage->getSchemaManager()->listTables();
+			return true;
+		} catch (\Exception $e) {
+			return false;
+		}
+	}
 }

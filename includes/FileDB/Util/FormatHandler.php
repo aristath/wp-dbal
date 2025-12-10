@@ -135,7 +135,10 @@ class FormatHandler
 	}
 
 	/**
-	 * Write JSON file.
+	 * Write JSON file with atomic write and file locking.
+	 *
+	 * Uses a temp file + rename for atomicity and exclusive lock to prevent
+	 * race conditions in concurrent access scenarios.
 	 *
 	 * @param string               $path The file path.
 	 * @param array<string, mixed> $data The data to write.
@@ -149,7 +152,39 @@ class FormatHandler
 			return false;
 		}
 
-		return false !== \file_put_contents($path, $json);
+		return $this->atomicWrite($path, $json);
+	}
+
+	/**
+	 * Write content atomically with file locking.
+	 *
+	 * Writes to a temp file first, then renames for atomicity.
+	 * Uses LOCK_EX for exclusive locking during write.
+	 *
+	 * @param string $path    The target file path.
+	 * @param string $content The content to write.
+	 * @return bool True on success.
+	 */
+	protected function atomicWrite(string $path, string $content): bool
+	{
+		// Write to temp file first.
+		$tempPath = $path . '.tmp.' . \getmypid() . '.' . \mt_rand();
+
+		// Use LOCK_EX for exclusive lock during write.
+		$result = \file_put_contents($tempPath, $content, \LOCK_EX);
+
+		if (false === $result) {
+			return false;
+		}
+
+		// Atomic rename (on POSIX systems).
+		if (!\rename($tempPath, $path)) {
+			// Cleanup temp file if rename fails.
+			@\unlink($tempPath);
+			return false;
+		}
+
+		return true;
 	}
 
 	/**
@@ -171,7 +206,10 @@ class FormatHandler
 	}
 
 	/**
-	 * Write PHP file.
+	 * Write PHP file with atomic write and file locking.
+	 *
+	 * Uses a temp file + rename for atomicity and exclusive lock to prevent
+	 * race conditions in concurrent access scenarios.
 	 *
 	 * @param string               $path The file path.
 	 * @param array<string, mixed> $data The data to write.
@@ -181,7 +219,7 @@ class FormatHandler
 	{
 		$content = "<?php\n\nreturn " . $this->exportArray($data) . ";\n";
 
-		return false !== \file_put_contents($path, $content);
+		return $this->atomicWrite($path, $content);
 	}
 
 	/**
