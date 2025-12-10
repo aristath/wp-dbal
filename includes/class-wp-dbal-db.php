@@ -916,4 +916,172 @@ class WP_DBAL_DB extends \wpdb
 			],
 		];
 	}
+
+	/**
+	 * Retrieve an entire SQL result set from the database.
+	 *
+	 * Executes a SQL query and returns the entire query result.
+	 *
+	 * @param string|null $query  SQL query.
+	 * @param string      $output Optional. Any of ARRAY_A | ARRAY_N | OBJECT | OBJECT_K.
+	 *                            Default OBJECT.
+	 * @return array<int|string, object|array<string|int, mixed>>|null Database query results.
+	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
+	public function get_results($query = null, $output = OBJECT)
+	{
+		if ($query) {
+			if (! $this->query($query)) {
+				return null;
+			}
+		}
+
+		$results = [];
+
+		if (OBJECT === $output) {
+			// Return as array of row objects.
+			return $this->last_result;
+		}
+
+		foreach ($this->last_result as $row) {
+			if (OBJECT_K === $output) {
+				// Return as associative array keyed by first column.
+				$rowArray = (array) $row;
+				$key      = \reset($rowArray);
+				$results[ $key ] = $row;
+			} elseif (ARRAY_A === $output) {
+				// Return as array of associative arrays.
+				$results[] = (array) $row;
+			} elseif (ARRAY_N === $output) {
+				// Return as array of numeric arrays.
+				$results[] = \array_values((array) $row);
+			}
+		}
+
+		return $results;
+	}
+
+	/**
+	 * Retrieve one row from the database.
+	 *
+	 * Executes a SQL query and returns the row from the SQL result.
+	 *
+	 * @param string|null $query  SQL query.
+	 * @param string      $output Optional. The required return type. One of OBJECT, ARRAY_A, or ARRAY_N.
+	 *                            Default OBJECT.
+	 * @param int         $y      Optional. Row to return. Indexed from 0. Default 0.
+	 * @return object|array<string|int, mixed>|null Database query result in format specified by $output.
+	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
+	public function get_row($query = null, $output = OBJECT, $y = 0)
+	{
+		if ($query) {
+			if (! $this->query($query)) {
+				return null;
+			}
+		}
+
+		if (! isset($this->last_result[ $y ])) {
+			return null;
+		}
+
+		$row = $this->last_result[ $y ];
+
+		if (OBJECT === $output) {
+			return $row;
+		} elseif (ARRAY_A === $output) {
+			return (array) $row;
+		} elseif (ARRAY_N === $output) {
+			return \array_values((array) $row);
+		}
+
+		return $row;
+	}
+
+	/**
+	 * Retrieve one variable from the database.
+	 *
+	 * Executes a SQL query and returns the value from the SQL result.
+	 * If the SQL result contains more than one column and/or more than one row,
+	 * the value in the column and row specified is returned. If $query is null,
+	 * the value in the specified column and row from the previous SQL result is returned.
+	 *
+	 * @param string|null $query Optional. SQL query. Defaults to null, use the result from previous query.
+	 * @param int         $x     Optional. Column of value to return. Indexed from 0. Default 0.
+	 * @param int         $y     Optional. Row of value to return. Indexed from 0. Default 0.
+	 * @return string|null Database query result (as string), or null on failure.
+	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
+	public function get_var($query = null, $x = 0, $y = 0)
+	{
+		if ($query) {
+			if (! $this->query($query)) {
+				return null;
+			}
+		}
+
+		if (! isset($this->last_result[ $y ])) {
+			return null;
+		}
+
+		$values = \array_values((array) $this->last_result[ $y ]);
+
+		return isset($values[ $x ]) ? (string) $values[ $x ] : null;
+	}
+
+	/**
+	 * Retrieve one column from the database.
+	 *
+	 * Executes a SQL query and returns the column from the SQL result.
+	 * If the SQL result contains more than one column, the column specified is returned.
+	 * If $query is null, the specified column from the previous SQL result is returned.
+	 *
+	 * @param string|null $query Optional. SQL query. Defaults to null, use the result from the previous query.
+	 * @param int         $x     Optional. Column to return. Indexed from 0. Default 0.
+	 * @return array<int, string|null> Database query result. Array indexed from 0 by SQL result row number.
+	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
+	public function get_col($query = null, $x = 0): array
+	{
+		if ($query) {
+			if (! $this->query($query)) {
+				return [];
+			}
+		}
+
+		$column = [];
+
+		foreach ($this->last_result as $row) {
+			$values   = \array_values((array) $row);
+			$column[] = isset($values[ $x ]) ? (string) $values[ $x ] : null;
+		}
+
+		return $column;
+	}
+
+	/**
+	 * Retrieve the character set for a given table and column.
+	 *
+	 * @return string The table CHARACTER SET and COLLATE clause.
+	 */
+	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, PSR1.Methods.CamelCapsMethodName.NotCamelCaps, Squiz.NamingConventions.ValidFunctionName.ScopeNotCamelCaps -- wpdb override
+	public function get_charset_collate(): string
+	{
+		$charset_collate = '';
+
+		// For non-MySQL engines, charset/collate syntax doesn't apply.
+		if (! \in_array($this->dbEngine, [ 'mysql' ], true)) {
+			return $charset_collate;
+		}
+
+		if (! empty($this->charset)) {
+			$charset_collate = "DEFAULT CHARACTER SET {$this->charset}";
+		}
+
+		if (! empty($this->collate)) {
+			$charset_collate .= " COLLATE {$this->collate}";
+		}
+
+		return $charset_collate;
+	}
 }
